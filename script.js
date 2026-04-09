@@ -1,0 +1,533 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+// --- GLOBAL EXPOSURE (CRITICAL FOR UI) ---
+window.updateCategory = (cat) => {
+    if (typeof internalUpdateCategory === 'function') internalUpdateCategory(cat);
+};
+window.clearAllData = () => {
+    if (confirm("정말로 모든 데이터를 '완전 삭제'하고 초기화하시겠습니까? 샘플 데이터도 모두 삭제됩니다.")) {
+        localStorage.setItem('mypocket_cards', JSON.stringify([]));
+        location.reload();
+    }
+};
+window.importFromCSV = (e) => {
+    if (typeof internalImportFromCSV === 'function') internalImportFromCSV(e);
+};
+window.handleAddToPocket = () => {
+    if (typeof internalHandleAddToPocket === 'function') internalHandleAddToPocket();
+};
+
+// --- STATE MANAGEMENT ---
+let state = {
+    allCards: [],
+    currentQueue: [],
+    currentIndex: 0,
+    currentCategory: 'all',
+    streak: 0,
+    isGenerating: false
+};
+
+// --- Data: Preset Flashcards ---
+const PRESET_CARDS = [
+    { id: 't1', cat: 'travel', en: "Where is the nearest subway station?", ko: "가장 가까운 지하철역이 어디인가요?", usage: "길 찾기의 기본! 'Where is' 뒤에 장소만 바꾸면 어디든 물어볼 수 있어요.", ex: "Excuse me, where is the nearest subway station?", source: 'preset', done: false },
+    { id: 't2', cat: 'travel', en: "I'd like to check in, please.", ko: "체크인하고 싶습니다.", usage: "호텔 도착 시 가장 먼저 쓰게 되는 문장입니다.", ex: "Hello, I have a reservation. I'd like to check in, please.", source: 'preset', done: false },
+    { id: 'd1', cat: 'daily', en: "How are you doing today?", ko: "오늘 하루 어떠세요?", usage: "상대방의 하루를 묻는 인삿말입니다.", ex: "Hi there! How are you doing today?", source: 'preset', done: false },
+    { id: 'b1', cat: 'biz', en: "I'm calling to clarify some points.", ko: "몇 가지 사항을 확인하기 위해 전화드렸습니다.", usage: "전화 비즈니스의 시작!", ex: "Hello, I'm calling to clarify some points in the contract.", source: 'preset', done: false }
+];
+
+// --- DOM Elements ---
+const flashcard = document.getElementById('flashcard');
+const cardEn = document.getElementById('card-en');
+const cardKo = document.getElementById('card-ko');
+const cardUsage = document.getElementById('card-usage');
+const cardEx = document.getElementById('card-ex');
+const progressFill = document.getElementById('progress-fill');
+const cardCountLabel = document.getElementById('card-count');
+const btnAgain = document.getElementById('btn-again');
+const btnDone = document.getElementById('btn-done');
+const toastContainer = document.getElementById('toast-container');
+const categoryTabs = document.getElementById('category-tabs');
+const bottomNavItems = document.querySelectorAll('.nav-item');
+const panels = document.querySelectorAll('.panel');
+
+const aiInputKo = document.getElementById('ai-input-ko');
+const aiInputEn = document.getElementById('ai-input-en');
+const aiCatBtns = document.querySelectorAll('.ai-cat-btn');
+const btnAiGenerate = document.getElementById('btn-ai-generate');
+const aiToneBtns = document.querySelectorAll('.ai-tone-btn');
+const aiResult = document.getElementById('ai-result');
+const aiResultEn = document.getElementById('ai-result-en');
+const aiResultKo = document.getElementById('ai-result-ko');
+const aiResultUsage = document.getElementById('ai-result-usage');
+const aiResultEx = document.getElementById('ai-result-ex');
+const btnAddToPocket = document.getElementById('btn-add-to-pocket');
+
+const myCardList = document.getElementById('my-card-list');
+const btnCsvExport = document.getElementById('btn-csv-export');
+const csvImport = document.getElementById('csv-import');
+
+// --- Initialization ---
+function init() {
+    loadData();
+    setupEventListeners();
+    internalUpdateCategory('all');
+    renderMyList();
+}
+
+function loadData() {
+    const savedData = localStorage.getItem('mypocket_cards');
+    if (savedData !== null) {
+        state.allCards = JSON.parse(savedData);
+    } else {
+        state.allCards = [...PRESET_CARDS];
+        saveToLocalStorage();
+    }
+}
+
+function saveToLocalStorage() {
+    localStorage.setItem('mypocket_cards', JSON.stringify(state.allCards));
+}
+
+function setupEventListeners() {
+    bottomNavItems.forEach(item => {
+        item.addEventListener('click', () => {
+            const targetPanel = item.dataset.panel;
+            bottomNavItems.forEach(nav => nav.classList.remove('active'));
+            item.classList.add('active');
+            panels.forEach(panel => {
+                panel.classList.remove('active');
+                if (panel.id === targetPanel) panel.classList.add('active');
+            });
+            if (targetPanel === 'list-panel') renderMyList();
+            if (targetPanel === 'study-panel') internalUpdateCategory(state.currentCategory);
+        });
+    });
+
+    categoryTabs.addEventListener('click', (e) => {
+        if (e.target.classList.contains('tab-item')) {
+            document.querySelectorAll('.tab-item').forEach(btn => btn.classList.remove('active'));
+            e.target.classList.add('active');
+            internalUpdateCategory(e.target.dataset.cat);
+        }
+    });
+
+    flashcard.addEventListener('click', () => flashcard.classList.toggle('card-flipped'));
+    btnDone.addEventListener('click', () => handleCardAction('done'));
+    btnAgain.addEventListener('click', () => handleCardAction('again'));
+
+    aiCatBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            aiCatBtns.forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+        });
+    });
+
+    aiToneBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            aiToneBtns.forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+        });
+    });
+
+    btnAiGenerate.addEventListener('click', handleAiGenerate);
+    btnAddToPocket.addEventListener('click', internalHandleAddToPocket);
+
+    btnCsvExport.addEventListener('click', exportToCSV);
+    csvImport.addEventListener('change', internalImportFromCSV);
+
+    document.getElementById('download-sample').addEventListener('click', (e) => {
+        e.preventDefault();
+        downloadSampleCSV();
+    });
+
+    document.getElementById('btn-reset-data').addEventListener('click', window.clearAllData);
+}
+
+// --- Study Logic ---
+function internalUpdateCategory(cat) {
+    const validCats = ['all', 'travel', 'daily', 'biz', 'user', 'done'];
+    const inputCat = (cat || state.currentCategory || 'all').toLowerCase().trim();
+    state.currentCategory = validCats.includes(inputCat) ? inputCat : 'all';
+    
+    let filtered = [];
+    if (state.currentCategory === 'all') {
+        filtered = state.allCards.filter(c => c.done !== true);
+    } else if (state.currentCategory === 'done') {
+        filtered = state.allCards.filter(c => c.done === true);
+    } else if (state.currentCategory === 'user') {
+        filtered = state.allCards.filter(c => c.source === 'ai_buddy' && c.done !== true);
+    } else {
+        filtered = state.allCards.filter(c => c.cat === state.currentCategory && c.done !== true);
+    }
+
+    state.currentQueue = (state.currentCategory === 'done') ? [...filtered] : shuffleArray([...filtered]);
+    renderCurrentCard();
+}
+
+function renderCurrentCard() {
+    flashcard.classList.remove('card-flipped');
+    const total = state.currentQueue.length;
+    
+    // Toggle Button Text based on category
+    const btnDoneText = btnDone.querySelector('span');
+    if (state.currentCategory === 'done') {
+        btnDoneText.textContent = "다시 암기 필요";
+        btnDone.classList.add('btn-relearn');
+        btnDone.classList.remove('btn-primary', 'btn-secondary');
+    } else {
+        btnDoneText.textContent = "외웠어요";
+        btnDone.classList.add('btn-primary');
+        btnDone.classList.remove('btn-relearn', 'btn-secondary');
+    }
+
+    if (total === 0) {
+        cardEn.textContent = "All Done! 🎉";
+        cardKo.textContent = "학습할 카드가 없습니다.";
+        cardUsage.textContent = "가져오기나 AI 버디로 카드를 추가해보세요.";
+        cardEx.textContent = "";
+        cardCountLabel.textContent = "0/0";
+        progressFill.style.width = "0%";
+        btnDone.disabled = true;
+        btnAgain.disabled = true;
+        return;
+    }
+
+    btnDone.disabled = false;
+    btnAgain.disabled = false;
+    const card = state.currentQueue[0];
+    cardEn.textContent = card.en;
+    cardKo.textContent = card.ko;
+    cardUsage.innerText = card.usage || "";
+    // Force double spacing for dialogue (Even if stored/sent as one line)
+    let spacedEx = (card.ex || "");
+    spacedEx = spacedEx.replace(/\s*([A-Z]:)/g, "\n\n$1").trim();
+    cardEx.innerText = spacedEx;
+
+    // Show 'My' badge if source is ai_buddy
+    const isMy = (card.source === 'ai_buddy');
+    document.getElementById('card-my-front').classList.toggle('hidden', !isMy);
+    document.getElementById('card-my-back').classList.toggle('hidden', !isMy);
+    cardCountLabel.textContent = `1/${total}`;
+    
+    const overallTotal = state.allCards.length;
+    const doneCount = state.allCards.filter(c => c.done).length;
+    progressFill.style.width = `${(doneCount / overallTotal) * 100}%`;
+}
+
+function handleCardAction(action) {
+    if (state.currentQueue.length === 0) return;
+    const currentCard = state.currentQueue[0];
+
+    if (action === 'done') {
+        const masterIdx = state.allCards.findIndex(c => c.id === currentCard.id);
+        if (masterIdx !== -1) {
+            state.allCards[masterIdx].done = (state.currentCategory !== 'done');
+            saveToLocalStorage();
+        }
+        state.currentQueue.shift();
+    } else {
+        const cardToRepeat = state.currentQueue.shift();
+        state.currentQueue.push(cardToRepeat);
+    }
+    renderCurrentCard();
+}
+
+// --- AI Buddy Logic ---
+async function handleAiGenerate() {
+    const inputKo = aiInputKo.value.trim();
+    const inputEn = aiInputEn.value.trim();
+    const apiKey = "AIzaSyAd_KDQ3NvfYGZZkWF3oyOW6n8zxHOjJYk";
+    
+    if (!inputKo) { showToast("한국어 의도를 먼저 입력해주세요!"); return; }
+
+    const catBtn = document.querySelector('.ai-cat-btn.selected');
+    const toneBtn = document.querySelector('.ai-tone-btn.selected');
+    const cat = catBtn ? catBtn.dataset.cat : 'biz';
+    const tone = toneBtn ? toneBtn.dataset.tone : 'biz';
+
+    btnAiGenerate.disabled = true;
+    btnAiGenerate.innerHTML = '<i data-lucide="loader-2" class="spin"></i> AI 멘토가 생각 중...';
+    if (window.lucide) lucide.createIcons();
+
+    const prompt = `
+        대상 카테고리: ${cat}
+        선택된 톤 가이드라인:
+        - official: 공식적/업무 (회사나 공적인 곳에서 격식을 갖춘 정중한 표현)
+        - general: 일반 (보통의 상황에서 사람들이 보편적으로 쓰는 표준 표현)
+        - casual: 캐주얼 (친구, 동료들에게 편하게 하는 일상적인 패턴)
+        
+        선택된 톤: ${tone}
+        사용자 한국어 의도: "${inputKo}"
+        사용자 초기 영작 시도: "${inputEn || '없음'}"
+
+        역할: 넌 사용자의 영어 영작 멘토야. 
+        조건:
+        1. 사용자가 '초기 영작 시도'를 했다면, 그 의도를 존중하되 선택된 '톤 가이드라인'에 맞춰 더 세련된 표현으로 교정해줘.
+        2. '초기 영작 시도'가 없다면, '톤 가이드라인'을 완벽히 반영하여 해당 상황에 가장 적절한 문장을 추천해줘.
+        3. 'usage' 필드에는 이 문장이 선택된 톤(공식/일반/캐주얼)에 왜 적합한지, 그리고 실제 상황에서 어떤 뉘앙스로 전달되는지 친절하게 설명해줘 (한국어로).
+        4. 'ex' 필드에는 이 문장을 활용한 실제 대화문 예시를 1개 적어줘. (A: ..., B: ... 형식으로 작성하고, 화자가 바뀌면 반드시 **두 줄의 줄바꿈(/n/n)**을 넣어 가독성을 높여줘)
+
+        반드시 아래 JSON 형식으로만 응답해:
+        {
+          "en": "최종 교정/추천된 영어 문장",
+          "ko": "문장의 한글 뜻",
+          "usage": "톤/상황/문법 조언",
+          "ex": "실전 활용 예문"
+        }
+    `;
+
+    try {
+        // --- 1. Model Discovery ---
+        let listData;
+        let retryCount = 0;
+        const maxRetries = 2;
+
+        async function fetchModels() {
+            const listUrl = `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`;
+            const res = await fetch(listUrl);
+            if (res.status === 503 && retryCount < maxRetries) {
+                retryCount++;
+                await new Promise(r => setTimeout(r, 1500));
+                return fetchModels();
+            }
+            if (!res.ok) throw new Error(`모델 목록 조회 실패. API 응답: ${res.status}`);
+            return res.json();
+        }
+
+        listData = await fetchModels();
+        const availableModels = listData.models.filter(m => 
+            m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent")
+        );
+
+        if (availableModels.length === 0) throw new Error("가용 모델이 없습니다.");
+
+        // --- 2. Generation with Model Fallback ---
+        let resData = null;
+        let lastError = "";
+
+        for (const model of availableModels) {
+            const MODEL_ID = model.name;
+            const API_URL = `https://generativelanguage.googleapis.com/v1/${MODEL_ID}:generateContent?key=${apiKey}`;
+            
+            console.log(`Trying model: ${MODEL_ID}`);
+            let genRetryCount = 0;
+            
+            // Nested function to handle 503 retries for CURRENT model
+            const tryThisModel = async () => {
+                const res = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                });
+
+                if (res.status === 503 && genRetryCount < maxRetries) {
+                    genRetryCount++;
+                    await new Promise(r => setTimeout(r, 1500));
+                    return tryThisModel();
+                }
+                return res;
+            };
+
+            const response = await tryThisModel();
+
+            if (response.ok) {
+                resData = await response.json();
+                console.log(`Success with ${MODEL_ID}`);
+                break;
+            } else {
+                const errJson = await response.json().catch(() => ({}));
+                lastError = errJson.error?.message || "Unknown error";
+                
+                if (response.status === 429) {
+                    console.warn(`Model ${MODEL_ID} quota hit, skipping...`);
+                    continue; // Try NEXT model
+                } else {
+                    throw new Error(`API Error ${response.status}: ${lastError}`);
+                }
+            }
+        }
+
+        if (!resData) {
+            throw new Error(`모든 가용 모델의 일일 한도가 초과되었습니다. 1시간 뒤 다시 시도해 주세요. (${lastError})`);
+        }
+
+        const rawText = resData.candidates[0].content.parts[0].text;
+        
+        // Robust JSON Extraction
+        let data;
+        try {
+            const cleanText = rawText.replace(/```json|```/g, "").trim();
+            data = JSON.parse(cleanText);
+        } catch (parseErr) {
+            const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) data = JSON.parse(jsonMatch[0]);
+            else throw new Error("AI 응답 데이터 분석에 실패했습니다.");
+        }
+
+        aiResultEn.textContent = data.en;
+        aiResultKo.textContent = data.ko;
+        aiResultUsage.textContent = data.usage;
+        // Force double spacing for dialogue (Even if AI sent it in one line)
+        // This splits "A: ... B: ..." into separate lines with a gap
+        let spacedEx = (data.ex || "");
+        // If it starts with A: but has B: later without a newline, force it
+        spacedEx = spacedEx.replace(/\s*([A-Z]:)/g, "\n\n$1").trim();
+        aiResultEx.innerText = spacedEx;
+        
+        aiResult.classList.remove('hidden');
+        btnAddToPocket.disabled = false;
+        btnAddToPocket.textContent = "학습 포켓에 넣기";
+    } catch (e) {
+        showToast("AI 멘토를 불러오지 못했습니다.");
+        console.error("AI Buddy Detailed Error:", e);
+        
+        // Specialize message for 429 (Rate Limit)
+        if (e.message.includes("429")) {
+            alert(`[무료 한도 초과] 구글 AI가 잠시 바쁩니다. \n약 30초~1분 뒤에 다시 시도해 주세요.\n\n상세 정보: ${e.message}`);
+        } else {
+            alert(`에러 진단: ${e.message}\n(일시적인 네트워크 문제일 수 있으니 잠시 후 다시 시도해 주세요.)`);
+        }
+    } finally {
+        btnAiGenerate.disabled = false;
+        btnAiGenerate.innerHTML = '<i data-lucide="wand-2"></i> 영작하기';
+        if (window.lucide) lucide.createIcons();
+    }
+}
+
+function internalHandleAddToPocket() {
+    const newCard = {
+        id: 'user_' + Date.now(),
+        cat: document.querySelector('.ai-cat-btn.selected').dataset.cat,
+        en: aiResultEn.textContent,
+        ko: aiResultKo.textContent,
+        usage: aiResultUsage.textContent,
+        ex: aiResultEx.textContent,
+        source: 'ai_buddy',
+        done: false
+    };
+    state.allCards.push(newCard);
+    saveToLocalStorage();
+    showToast("포켓에 저장되었습니다!");
+
+    // Clear UI for next phrase
+    aiInputKo.value = "";
+    aiInputEn.value = "";
+    aiResult.classList.add('hidden');
+    window.scrollTo({ top: 0, behavior: 'smooth' }); // Scroll back to top for focus
+}
+
+// --- CSV Logic ---
+function exportToCSV() {
+    // Helper to escape CSV fields (removes newlines and escapes quotes)
+    const esc = (text) => {
+        if (text === null || text === undefined) return "";
+        const clean = text.toString().replace(/[\r\n]+/g, " ");
+        return `"${clean.replace(/"/g, '""')}"`;
+    };
+
+    // Header with intuitive names
+    let csvContent = "Category,English,Korean,Usage,Example,Origin\n";
+    
+    // Safety check: ensure we export the latest state
+    const cardsToExport = [...state.allCards];
+    
+    cardsToExport.forEach(c => {
+        // Map source code to human-readable labels for Excel users
+        let originLabel = "Sample (기본)";
+        if (c.source === 'ai_buddy') originLabel = "AI_Mentor (AI버디)";
+        if (c.source === 'csv') originLabel = "My_Library (직접추가)";
+
+        csvContent += `${esc(c.cat)},${esc(c.en)},${esc(c.ko)},${esc(c.usage)},${esc(c.ex)},${esc(originLabel)}\n`;
+    });
+    
+    const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `mypocket_study_data_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    showToast(`${cardsToExport.length}개의 데이터가 내보내졌습니다.`);
+}
+
+function internalImportFromCSV(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const lines = event.target.result.split('\n');
+        lines.forEach((line, i) => {
+            if (i === 0) return; // Skip header
+            if (!line.trim()) return;
+
+            // Robust split handling quoted commas
+            const parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+            if (parts.length >= 3) {
+                const rawOrigin = (parts[5] || '').replace(/^"|"$/g, '').trim();
+                let source = 'csv';
+                if (rawOrigin.includes('AI_Mentor')) source = 'ai_buddy';
+
+                state.allCards.push({
+                    id: 'imp_' + Date.now() + i,
+                    cat: (parts[0] || 'user').replace(/^"|"$/g, '').trim().toLowerCase(),
+                    en: parts[1].replace(/^"|"$/g, '').trim(),
+                    ko: parts[2].replace(/^"|"$/g, '').trim(),
+                    usage: (parts[3] || '').replace(/^"|"$/g, '').trim(),
+                    ex: (parts[4] || '').replace(/^"|"$/g, '').trim(),
+                    source: source,
+                    done: false
+                });
+            }
+        });
+        saveToLocalStorage();
+        
+        // AUTO-SWITCH TO STUDY
+        bottomNavItems.forEach(n => n.classList.remove('active'));
+        document.querySelector('[data-panel="study-panel"]').classList.add('active');
+        panels.forEach(p => p.classList.remove('active'));
+        document.getElementById('study-panel').classList.add('active');
+        
+        internalUpdateCategory('all');
+        showToast("가져오기 완료! 바로 학습을 시작합니다.");
+    };
+    reader.readAsText(file);
+}
+
+function downloadSampleCSV() {
+    const content = "Category,English,Korean,Usage\ntravel,Where is the nearest subway station?,가장 가까운 지하철역이 어디인가요?,교통편을 물을 때 필수인 문장입니다.";
+    const blob = new Blob(["\ufeff" + content], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "sample.csv";
+    link.click();
+}
+
+// --- Utils ---
+function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+
+function showToast(msg) {
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.textContent = msg;
+    toastContainer.appendChild(toast);
+    setTimeout(() => toast.remove(), 2500);
+}
+
+// --- List Logic ---
+
+function renderMyList() {
+    if (!myCardList) return;
+    myCardList.innerHTML = '';
+    state.allCards.filter(c => c.source === 'ai_buddy').forEach(card => {
+        const item = document.createElement('div');
+        item.className = 'list-item';
+        item.innerHTML = `<div>${card.en}</div><button class="btn-delete" data-id="${card.id}">삭제</button>`;
+        myCardList.appendChild(item);
+    });
+}
+
+init();

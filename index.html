@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>My Pocket | 내 주머니 속 영어 버디</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Gemini SDK -->
+    <script type="importmap">
+      {
+        "imports": {
+          "@google/generative-ai": "https://esm.sh/@google/generative-ai@latest"
+        }
+      }
+    </script>
+</head>
+<body>
+    <div id="app" class="mobile-container">
+        <!-- Header / Logo -->
+        <header class="header">
+            <div class="logo">
+                <i data-lucide="book-open-check"></i>
+                <span>My Pocket</span>
+            </div>
+            <div id="toast-container"></div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main id="main-content">
+            <!-- Study Mode (Home) -->
+            <section id="study-panel" class="panel active">
+                <nav class="category-tabs" id="category-tabs">
+                    <button class="tab-item active" data-cat="all">전체</button>
+                    <button class="tab-item" data-cat="travel">여행</button>
+                    <button class="tab-item" data-cat="daily">일상</button>
+                    <button class="tab-item" data-cat="biz">비즈니스</button>
+                    <button class="tab-item" data-cat="user">내 표현</button>
+                    <button class="tab-item" data-cat="done">외운 것</button>
+                </nav>
+
+                <div class="card-display">
+                    <div class="progress-container">
+                        <div class="progress-bar-bg">
+                            <div id="progress-fill" class="progress-bar-fill"></div>
+                        </div>
+                        <span id="card-count">0/0</span>
+                    </div>
+
+                    <div id="card-stack" class="card-stack">
+                        <!-- Flashcards will be injected here -->
+                        <div class="flashcard-container" id="current-card-container">
+                            <div class="flashcard" id="flashcard">
+                                <div class="flashcard-front">
+                                    <span class="card-label">English</span>
+                                    <div id="card-my-front" class="my-badge hidden">My</div>
+                                    <h2 id="card-en">Welcome!</h2>
+                                    <p class="tap-hint">Tap to flip</p>
+                                </div>
+                                <div class="flashcard-back">
+                                    <span class="card-label">KOREAN</span>
+                                    <div id="card-my-back" class="my-badge hidden">My</div>
+                                    <h3 id="card-ko">환영합니다!</h3>
+                                    <p id="card-usage" class="usage-tip">카드를 클릭해서 학습을 시작하세요.</p>
+                                    <p id="card-ex" class="example-box"></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="action-buttons">
+                        <button id="btn-again" class="btn btn-secondary">
+                            <i data-lucide="chevron-right"></i>
+                            <span>다음</span>
+                        </button>
+                        <button id="btn-done" class="btn btn-primary">
+                            <i data-lucide="check-circle-2"></i>
+                            <span>외웠어요</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- AI Buddy Mode -->
+            <section id="ai-panel" class="panel">
+                <div class="ai-header">
+                    <div class="ai-title-wrap">
+                        <h2><i data-lucide="sparkles"></i> AI Buddy</h2>
+                        <span class="ai-badge">Powered by Gemini</span>
+                    </div>
+                    <p>어떤 표현을 영어로 만들고 싶나요?</p>
+                    
+                </div>
+                
+                <div class="ai-input-group">
+                    <div class="input-field">
+                        <label for="ai-input-ko"><i data-lucide="languages"></i> 한국어 문장</label>
+                        <textarea id="ai-input-ko" lang="ko" placeholder="영어로 바꾸고 싶은 한국어 문장을 입력하세요. (ex. 이거 다른 색깔은 없나요?)"></textarea>
+                    </div>
+                    
+                    <div class="input-field">
+                        <label for="ai-input-en"><i data-lucide="edit-3"></i> 내가 아는 영작 (선택)</label>
+                        <textarea id="ai-input-en" lang="en" placeholder="직접 만든 영어나 알고 있는 표현을 적어보세요. (보다 정확한 교정이 가능합니다.)"></textarea>
+                    </div>
+                    
+                    <div class="ai-options">
+                        <label>상황(카테고리) 선택</label>
+                        <div class="ai-category-select">
+                            <button class="ai-cat-btn selected" data-cat="biz">비즈니스</button>
+                            <button class="ai-cat-btn" data-cat="daily">일상</button>
+                            <button class="ai-cat-btn" data-cat="travel">여행</button>
+                        </div>
+                    </div>
+
+                    <div class="ai-options">
+                        <label>표현 톤 선택</label>
+                        <div class="ai-tone-select">
+                            <button class="ai-tone-btn selected" data-tone="official">
+                                <i data-lucide="briefcase"></i> 공식적/업무
+                            </button>
+                            <button class="ai-tone-btn" data-tone="general">
+                                <i data-lucide="sun"></i> 일반
+                            </button>
+                            <button class="ai-tone-btn" data-tone="casual">
+                                <i data-lucide="smile"></i> 캐주얼
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <button id="btn-ai-generate" class="btn btn-primary btn-block">
+                        <i data-lucide="wand-2"></i>
+                        <span>영작하기</span>
+                    </button>
+                </div>
+
+                <div id="ai-result" class="ai-result-card hidden">
+                    <div class="result-label">Result</div>
+                    <div id="ai-result-en" class="result-en" lang="en">...</div>
+                    <div id="ai-result-ko" class="result-ko" lang="ko">...</div>
+                    <p id="ai-result-usage" class="result-usage" lang="ko">...</p>
+                    <div id="ai-result-ex" class="result-ex" lang="en"></div>
+                    <button id="btn-add-to-pocket" class="btn btn-white btn-block">
+                        <i data-lucide="plus-circle"></i>
+                        <span>학습 포켓에 넣기</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- My List Mode -->
+            <section id="list-panel" class="panel">
+                <div class="list-header">
+                    <h2>My List</h2>
+                    <p class="notice">💡 데이터가 브라우저에 직접 저장됩니다.</p>
+                </div>
+
+                <div id="my-card-list" class="my-card-list">
+                    <!-- List items injected here -->
+                </div>
+
+                <div class="action-card">
+                    <h3 class="action-title"><i data-lucide="database"></i> 데이터 관리</h3>
+                    
+                    <div class="action-row">
+                        <label for="csv-import" class="btn btn-secondary btn-block">
+                            <i data-lucide="file-up"></i> 
+                            <span>엑셀 가져오기</span>
+                        </label>
+                        <input type="file" id="csv-import" accept=".csv,.txt,text/csv,text/plain" class="hidden">
+                    </div>
+                    
+                    <div class="action-row export-controls">
+                        <select id="export-category-select" class="custom-select">
+                            <option value="all">전체 내보내기</option>
+                            <option value="travel">여행 카테고리만</option>
+                            <option value="daily">일상 카테고리만</option>
+                            <option value="biz">비즈니스 카테고리만</option>
+                            <option value="user">내 표현만 (직접 영작)</option>
+                        </select>
+                        <button id="btn-csv-export" class="btn btn-primary">
+                            <i data-lucide="file-down"></i>
+                            <span>내보내기</span>
+                        </button>
+                    </div>
+                    
+                    <div class="guide-link">
+                        <a href="#" id="download-sample"><i data-lucide="info"></i> 샘플 양식 다운로드</a>
+                    </div>
+
+                    <div class="action-row" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
+                        <button id="btn-reset-data" class="btn btn-secondary btn-block" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.2); width: 100%;">
+                            <i data-lucide="trash-2"></i>
+                            <span>전체 데이터 초기화</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        </main>
+
+        <!-- Bottom Navigation -->
+        <footer class="bottom-nav">
+            <button class="nav-item active" data-panel="study-panel">
+                <i data-lucide="book-open"></i>
+                <span>학습</span>
+            </button>
+            <button class="nav-item" data-panel="ai-panel">
+                <i data-lucide="message-square"></i>
+                <span>AI 버디</span>
+            </button>
+            <button class="nav-item" data-panel="list-panel">
+                <i data-lucide="list"></i>
+                <span>내 목록</span>
+            </button>
+        </footer>
+    </div>
+
+    <!-- Lucide Initialization -->
+    <script>
+        lucide.createIcons();
+    </script>
+    <script type="module" src="script.js"></script>
+</body>
+</html>
