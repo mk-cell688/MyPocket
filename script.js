@@ -21,7 +21,8 @@ window.handleAddToPocket = () => {
 let state = {
     allCards: [],
     currentQueue: [],
-    currentIndex: 0,
+    currentIndex: 1, // Current view index in session
+    sessionTotal: 0, // Total cards in current category at session start
     currentCategory: 'all',
     streak: 0,
     isGenerating: false
@@ -160,7 +161,13 @@ function internalUpdateCategory(cat) {
         filtered = state.allCards.filter(c => c.cat === state.currentCategory && c.done !== true);
     }
 
-    state.currentQueue = (state.currentCategory === 'done') ? [...filtered] : shuffleArray([...filtered]);
+    const shuffle = (state.currentCategory !== 'done');
+    state.currentQueue = shuffle ? shuffleArray([...filtered]) : [...filtered];
+    
+    // Reset counters for the new category session
+    state.sessionTotal = state.currentQueue.length;
+    state.currentIndex = (state.sessionTotal > 0) ? 1 : 0;
+    
     renderCurrentCard();
 }
 
@@ -207,7 +214,7 @@ function renderCurrentCard() {
     const isMy = (card.source === 'ai_buddy');
     document.getElementById('card-my-front').classList.toggle('hidden', !isMy);
     document.getElementById('card-my-back').classList.toggle('hidden', !isMy);
-    cardCountLabel.textContent = `1/${total}`;
+    cardCountLabel.textContent = `${state.currentIndex}/${state.sessionTotal}`;
     
     const overallTotal = state.allCards.length;
     const doneCount = state.allCards.filter(c => c.done).length;
@@ -229,6 +236,11 @@ function handleCardAction(action) {
         const cardToRepeat = state.currentQueue.shift();
         state.currentQueue.push(cardToRepeat);
     }
+    
+    state.currentIndex++;
+    if (state.sessionTotal > 0 && state.currentIndex > state.sessionTotal) {
+        state.currentIndex = 1;
+    }
     renderCurrentCard();
 }
 
@@ -236,7 +248,7 @@ function handleCardAction(action) {
 async function handleAiGenerate() {
     const inputKo = aiInputKo.value.trim();
     const inputEn = aiInputEn.value.trim();
-    const apiKey = "AIzaSyAd_KDQ3NvfYGZZkWF3oyOW6n8zxHOjJYk";
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     
     if (!inputKo) { showToast("한국어 의도를 먼저 입력해주세요!"); return; }
 
@@ -277,40 +289,28 @@ async function handleAiGenerate() {
     `;
 
     try {
-        // --- 1. Model Discovery ---
-        let listData;
-        let retryCount = 0;
-        const maxRetries = 2;
-
-        async function fetchModels() {
-            const listUrl = `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`;
-            const res = await fetch(listUrl);
-            if (res.status === 503 && retryCount < maxRetries) {
-                retryCount++;
-                await new Promise(r => setTimeout(r, 1500));
-                return fetchModels();
-            }
-            if (!res.ok) throw new Error(`모델 목록 조회 실패. API 응답: ${res.status}`);
-            return res.json();
-        }
-
-        listData = await fetchModels();
-        const availableModels = listData.models.filter(m => 
-            m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent")
-        );
-
-        if (availableModels.length === 0) throw new Error("가용 모델이 없습니다.");
+        // --- 1. 모델 설정 (하드코딩을 통한 안정성 확보) ---
+        const PREFERRED_MODELS = [
+            'models/gemini-2.5-flash',
+            'models/gemini-3.1-flash-lite-preview',
+            'models/gemini-2.5-pro',
+            'models/gemini-3.1-pro-preview',
+            'models/gemini-3-flash-preview'
+        ];
 
         // --- 2. Generation with Model Fallback ---
         let resData = null;
         let lastError = "";
+        let errorReport = [];
 
-        for (const model of availableModels) {
-            const MODEL_ID = model.name;
-            const API_URL = `https://generativelanguage.googleapis.com/v1/${MODEL_ID}:generateContent?key=${apiKey}`;
+        for (const modelId of PREFERRED_MODELS) {
+            const API_URL = `https://generativelanguage.googleapis.com/v1beta/${modelId}:generateContent?key=${apiKey}`;
             
-            console.log(`Trying model: ${MODEL_ID}`);
+            console.log(`Trying model: ${modelId}`);
+            await new Promise(r => setTimeout(r, 300)); // Short delay between model attempts
+            
             let genRetryCount = 0;
+            const maxRetries = 1;
             
             // Nested function to handle 503 retries for CURRENT model
             const tryThisModel = async () => {
@@ -322,7 +322,7 @@ async function handleAiGenerate() {
 
                 if (res.status === 503 && genRetryCount < maxRetries) {
                     genRetryCount++;
-                    await new Promise(r => setTimeout(r, 1500));
+                    await new Promise(r => setTimeout(r, 1000));
                     return tryThisModel();
                 }
                 return res;
@@ -332,15 +332,16 @@ async function handleAiGenerate() {
 
             if (response.ok) {
                 resData = await response.json();
-                console.log(`Success with ${MODEL_ID}`);
+                console.log(`Success with ${modelId}`);
                 break;
             } else {
                 const errJson = await response.json().catch(() => ({}));
                 lastError = errJson.error?.message || "Unknown error";
+                errorReport.push(`${modelId.split('/').pop()}(${response.status})`);
                 
-                if (response.status === 429) {
-                    console.warn(`Model ${MODEL_ID} quota hit, skipping...`);
-                    continue; // Try NEXT model
+                if ([404, 429, 503].includes(response.status)) {
+                    console.warn(`Model ${modelId} failed with ${response.status}, skipping...`);
+                    continue; 
                 } else {
                     throw new Error(`API Error ${response.status}: ${lastError}`);
                 }
@@ -348,7 +349,7 @@ async function handleAiGenerate() {
         }
 
         if (!resData) {
-            throw new Error(`모든 가용 모델의 일일 한도가 초과되었습니다. 1시간 뒤 다시 시도해 주세요. (${lastError})`);
+            throw new Error(`모든 가용 모델(${errorReport.join(', ')})의 한도가 초과되었습니다. 잠시 후 다시 시도해 주세요.`);
         }
 
         const rawText = resData.candidates[0].content.parts[0].text;
