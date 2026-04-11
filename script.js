@@ -1,4 +1,5 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+// MyPocket - Local Storage 기반 영어 학습 앱
+// Note: Gemini API는 REST 방식으로 직접 호출 (SDK 불필요)
 
 // --- GLOBAL EXPOSURE (CRITICAL FOR UI) ---
 window.updateCategory = (cat) => {
@@ -6,7 +7,7 @@ window.updateCategory = (cat) => {
 };
 window.clearAllData = () => {
     if (confirm("정말로 모든 데이터를 '완전 삭제'하고 초기화하시겠습니까? 샘플 데이터도 모두 삭제됩니다.")) {
-        localStorage.setItem('mypocket_cards', JSON.stringify([]));
+        localStorage.removeItem('mypocket_cards');
         location.reload();
     }
 };
@@ -76,17 +77,34 @@ function init() {
 }
 
 function loadData() {
-    const savedData = localStorage.getItem('mypocket_cards');
-    if (savedData !== null) {
-        state.allCards = JSON.parse(savedData);
-    } else {
+    try {
+        const savedData = localStorage.getItem('mypocket_cards');
+        if (savedData !== null) {
+            state.allCards = JSON.parse(savedData);
+            const aiCards = state.allCards.filter(c => c.source === 'ai_buddy').length;
+            const csvCards = state.allCards.filter(c => c.source === 'csv').length;
+            console.log(`✅ LocalStorage 로드 완료: 총 ${state.allCards.length}개 (AI버디: ${aiCards}개, CSV: ${csvCards}개)`);
+        } else {
+            state.allCards = [...PRESET_CARDS];
+            saveToLocalStorage();
+            console.log("✅ 최초 실행: 기본 카드를 LocalStorage에 저장했습니다.");
+        }
+    } catch (e) {
+        console.error("❌ LocalStorage 로드 실패:", e);
         state.allCards = [...PRESET_CARDS];
-        saveToLocalStorage();
     }
 }
 
 function saveToLocalStorage() {
-    localStorage.setItem('mypocket_cards', JSON.stringify(state.allCards));
+    try {
+        localStorage.setItem('mypocket_cards', JSON.stringify(state.allCards));
+        const aiCards = state.allCards.filter(c => c.source === 'ai_buddy').length;
+        const csvCards = state.allCards.filter(c => c.source === 'csv').length;
+        console.log(`💾 저장 완료: 총 ${state.allCards.length}개 (AI버디: ${aiCards}개, CSV: ${csvCards}개, 기본: ${state.allCards.length - aiCards - csvCards}개)`);
+    } catch (e) {
+        console.error("❌ LocalStorage 저장 실패:", e);
+        showToast("저장 중 오류가 발생했습니다.");
+    }
 }
 
 function setupEventListeners() {
@@ -244,50 +262,56 @@ function handleCardAction(action) {
     renderCurrentCard();
 }
 
+// --- API Key Modal (재사용 가능한 함수) ---
+function showApiKeyModal(title = "🔑 Gemini API 키 등록", desc = "구글 AI Studio에서 발급받은 API 키를 붙여넣어 주세요.") {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px);";
+        const modal = document.createElement('div');
+        modal.style.cssText = "background:#1e293b;padding:32px;border-radius:16px;width:90%;max-width:420px;box-shadow:0 20px 40px rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.12);text-align:center;";
+        modal.innerHTML = `
+            <div style="font-size:2rem;margin-bottom:12px;">🔑</div>
+            <h3 style="color:#fff;margin-bottom:10px;font-size:1.15rem;">${title}</h3>
+            <p style="color:#94a3b8;font-size:0.86rem;margin-bottom:22px;line-height:1.6;">${desc}<br><a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#60a5fa;">AI Studio 바로가기 →</a></p>
+            <input type="password" id="apikey-modal-input" placeholder="AIzaSy..." style="width:100%;padding:13px;border-radius:9px;border:1px solid rgba(255,255,255,0.2);background:rgba(0,0,0,0.25);color:#fff;margin-bottom:18px;box-sizing:border-box;font-size:0.95rem;">
+            <div style="display:flex;gap:10px;">
+                <button id="apikey-modal-cancel" style="flex:1;padding:13px;border-radius:9px;border:none;background:rgba(255,255,255,0.08);color:#cbd5e1;cursor:pointer;">취소</button>
+                <button id="apikey-modal-save" style="flex:2;padding:13px;border-radius:9px;border:none;background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;cursor:pointer;font-weight:bold;">저장하고 시작하기</button>
+            </div>
+        `;
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        // Auto-focus input
+        setTimeout(() => document.getElementById('apikey-modal-input')?.focus(), 100);
+
+        const save = () => {
+            const val = document.getElementById('apikey-modal-input').value.trim();
+            document.body.removeChild(overlay);
+            if (val) { localStorage.setItem('GEMINI_API_KEY', val); resolve(val); }
+            else resolve(null);
+        };
+        document.getElementById('apikey-modal-save').onclick = save;
+        document.getElementById('apikey-modal-cancel').onclick = () => { document.body.removeChild(overlay); resolve(null); };
+        document.getElementById('apikey-modal-input').onkeydown = (e) => { if (e.key === 'Enter') save(); };
+    });
+}
+
+// 키 변경 버튼 핸들러 (내 목록 탭에서 호출)
+window.changeApiKey = async () => {
+    const newKey = await showApiKeyModal("🔑 API 키 변경", "새로운 Gemini API 키를 입력하면 기존 키를 교체합니다.");
+    if (newKey) showToast("✅ API 키가 성공적으로 저장되었습니다!");
+};
+
 // --- AI Buddy Logic ---
 async function handleAiGenerate() {
     const inputKo = aiInputKo.value.trim();
     const inputEn = aiInputEn.value.trim();
     
-    // Retrieve key securely
+    // 키가 없을 때만 모달 표시 (저장된 키는 계속 재사용)
     let apiKey = localStorage.getItem('GEMINI_API_KEY');
-    
-    // Custom non-blocking modal to avoid browser popup suppression
-    if (!apiKey || apiKey.includes('AIzaSyAd_KDQ')) {
-        apiKey = await new Promise(resolve => {
-            const overlay = document.createElement('div');
-            overlay.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px);";
-            const modal = document.createElement('div');
-            modal.style.cssText = "background:#1e293b;padding:30px;border-radius:15px;width:90%;max-width:400px;box-shadow:0 10px 25px rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);text-align:center;";
-            modal.innerHTML = `
-                <h3 style="color:#fff;margin-bottom:15px;font-size:1.2rem;">🔑 새 API 키 필요</h3>
-                <p style="color:#cbd5e1;font-size:0.9rem;margin-bottom:20px;line-height:1.5;">구글 Gemini API 키가 만료되었거나 존재하지 않습니다.<br>새로운 키를 아래에 안전하게 붙여넣어 주세요.</p>
-                <input type="password" id="temp-key-input" placeholder="AIzaSy..." style="width:100%;padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:rgba(0,0,0,0.2);color:#fff;margin-bottom:20px;box-sizing:border-box;">
-                <div style="display:flex;gap:10px;">
-                    <button id="temp-key-cancel" style="flex:1;padding:12px;border-radius:8px;border:none;background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;">취소</button>
-                    <button id="temp-key-save" style="flex:1;padding:12px;border-radius:8px;border:none;background:#3b82f6;color:#fff;cursor:pointer;font-weight:bold;">새 키 저장</button>
-                </div>
-            `;
-            overlay.appendChild(modal);
-            document.body.appendChild(overlay);
-            
-            document.getElementById('temp-key-save').onclick = () => {
-                const val = document.getElementById('temp-key-input').value.trim();
-                document.body.removeChild(overlay);
-                resolve(val);
-            };
-            document.getElementById('temp-key-cancel').onclick = () => {
-                document.body.removeChild(overlay);
-                resolve(null);
-            };
-        });
-
-        if (apiKey) {
-            localStorage.setItem('GEMINI_API_KEY', apiKey.trim());
-        } else {
-            showToast("영작을 진행하려면 API 키가 반드시 필요합니다.");
-            return;
-        }
+    if (!apiKey) {
+        apiKey = await showApiKeyModal();
+        if (!apiKey) { showToast("영작하려면 API 키가 필요합니다."); return; }
     }
     
     if (!inputKo) { showToast("한국어 의도를 먼저 입력해주세요!"); return; }
@@ -423,12 +447,14 @@ async function handleAiGenerate() {
         
         const errMsg = e.message || "";
         if (errMsg.includes("400") || errMsg.includes("API_KEY_INVALID")) {
-            localStorage.removeItem('GEMINI_API_KEY'); // Clear bad key
-            showToast("API 키가 올바르지 않거나 만료되었습니다. 버튼을 다시 눌러 새 키를 등록해주세요.");
+            localStorage.removeItem('GEMINI_API_KEY');
+            showToast("API 키가 올바르지 않습니다. 새 키를 입력해 주세요.");
+            // 자동으로 키 입력 모달 재표시
+            setTimeout(() => showApiKeyModal("🔑 API 키 재등록", "입력하신 키가 유효하지 않습니다.<br>구글 AI Studio에서 새 키를 발급받아 입력해 주세요."), 500);
         } else if (errMsg.includes("429")) {
-            showToast("[무료 한도 초과] 구글 AI가 잠시 바쁩니다. 약 30초 뒤에 다시 시도해 주세요.");
+            showToast("[한도 초과] 구글 AI가 잠시 바쁩니다. 약 30초 뒤에 다시 시도해 주세요.");
         } else {
-            showToast(`에러 진단: ${errMsg} (일시적인 문제일 수 있습니다)`);
+            showToast(`에러: ${errMsg.substring(0, 80)}... (잠시 후 다시 시도해 주세요)`);
         }
         
     } finally {
