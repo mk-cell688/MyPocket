@@ -216,9 +216,9 @@ function renderCurrentCard() {
     document.getElementById('card-my-back').classList.toggle('hidden', !isMy);
     cardCountLabel.textContent = `${state.currentIndex}/${state.sessionTotal}`;
     
-    const overallTotal = state.allCards.length;
-    const doneCount = state.allCards.filter(c => c.done).length;
-    progressFill.style.width = `${(doneCount / overallTotal) * 100}%`;
+    // Update progress bar to match the current card index out of the session total
+    let progressPercent = (state.currentIndex / state.sessionTotal) * 100;
+    progressFill.style.width = `${Math.min(progressPercent, 100)}%`;
 }
 
 function handleCardAction(action) {
@@ -248,7 +248,47 @@ function handleCardAction(action) {
 async function handleAiGenerate() {
     const inputKo = aiInputKo.value.trim();
     const inputEn = aiInputEn.value.trim();
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    
+    // Retrieve key securely
+    let apiKey = localStorage.getItem('GEMINI_API_KEY');
+    
+    // Custom non-blocking modal to avoid browser popup suppression
+    if (!apiKey || apiKey.includes('AIzaSyAd_KDQ')) {
+        apiKey = await new Promise(resolve => {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px);";
+            const modal = document.createElement('div');
+            modal.style.cssText = "background:#1e293b;padding:30px;border-radius:15px;width:90%;max-width:400px;box-shadow:0 10px 25px rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);text-align:center;";
+            modal.innerHTML = `
+                <h3 style="color:#fff;margin-bottom:15px;font-size:1.2rem;">🔑 새 API 키 필요</h3>
+                <p style="color:#cbd5e1;font-size:0.9rem;margin-bottom:20px;line-height:1.5;">구글 Gemini API 키가 만료되었거나 존재하지 않습니다.<br>새로운 키를 아래에 안전하게 붙여넣어 주세요.</p>
+                <input type="password" id="temp-key-input" placeholder="AIzaSy..." style="width:100%;padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:rgba(0,0,0,0.2);color:#fff;margin-bottom:20px;box-sizing:border-box;">
+                <div style="display:flex;gap:10px;">
+                    <button id="temp-key-cancel" style="flex:1;padding:12px;border-radius:8px;border:none;background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;">취소</button>
+                    <button id="temp-key-save" style="flex:1;padding:12px;border-radius:8px;border:none;background:#3b82f6;color:#fff;cursor:pointer;font-weight:bold;">새 키 저장</button>
+                </div>
+            `;
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+            
+            document.getElementById('temp-key-save').onclick = () => {
+                const val = document.getElementById('temp-key-input').value.trim();
+                document.body.removeChild(overlay);
+                resolve(val);
+            };
+            document.getElementById('temp-key-cancel').onclick = () => {
+                document.body.removeChild(overlay);
+                resolve(null);
+            };
+        });
+
+        if (apiKey) {
+            localStorage.setItem('GEMINI_API_KEY', apiKey.trim());
+        } else {
+            showToast("영작을 진행하려면 API 키가 반드시 필요합니다.");
+            return;
+        }
+    }
     
     if (!inputKo) { showToast("한국어 의도를 먼저 입력해주세요!"); return; }
 
@@ -379,15 +419,18 @@ async function handleAiGenerate() {
         btnAddToPocket.disabled = false;
         btnAddToPocket.textContent = "학습 포켓에 넣기";
     } catch (e) {
-        showToast("AI 멘토를 불러오지 못했습니다.");
         console.error("AI Buddy Detailed Error:", e);
         
-        // Specialize message for 429 (Rate Limit)
-        if (e.message.includes("429")) {
-            alert(`[무료 한도 초과] 구글 AI가 잠시 바쁩니다. \n약 30초~1분 뒤에 다시 시도해 주세요.\n\n상세 정보: ${e.message}`);
+        const errMsg = e.message || "";
+        if (errMsg.includes("400") || errMsg.includes("API_KEY_INVALID")) {
+            localStorage.removeItem('GEMINI_API_KEY'); // Clear bad key
+            showToast("API 키가 올바르지 않거나 만료되었습니다. 버튼을 다시 눌러 새 키를 등록해주세요.");
+        } else if (errMsg.includes("429")) {
+            showToast("[무료 한도 초과] 구글 AI가 잠시 바쁩니다. 약 30초 뒤에 다시 시도해 주세요.");
         } else {
-            alert(`에러 진단: ${e.message}\n(일시적인 네트워크 문제일 수 있으니 잠시 후 다시 시도해 주세요.)`);
+            showToast(`에러 진단: ${errMsg} (일시적인 문제일 수 있습니다)`);
         }
+        
     } finally {
         btnAiGenerate.disabled = false;
         btnAiGenerate.innerHTML = '<i data-lucide="wand-2"></i> 영작하기';
@@ -441,11 +484,22 @@ function exportToCSV() {
         csvContent += `${esc(c.cat)},${esc(c.en)},${esc(c.ko)},${esc(c.usage)},${esc(c.ex)},${esc(originLabel)}\n`;
     });
     
-    const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    // Convert to Data URI instead of Blob to strictly enforce filename
+    const uri = "data:text/csv;charset=utf-8,\ufeff" + encodeURIComponent(csvContent);
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `mypocket_study_data_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.href = uri;
+    // Safer filename: MyPocket_Data_YYYYMMDD.csv
+    const now = new Date();
+    const dateStr = now.getFullYear() + 
+                    String(now.getMonth() + 1).padStart(2, '0') + 
+                    String(now.getDate()).padStart(2, '0');
+    link.setAttribute("download", `MyPocket_Data_${dateStr}.csv`);
+    
+    // Append -> Click -> Remove
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
+    
     showToast(`${cardsToExport.length}개의 데이터가 내보내졌습니다.`);
 }
 
@@ -455,6 +509,7 @@ function internalImportFromCSV(e) {
     const reader = new FileReader();
     reader.onload = (event) => {
         const lines = event.target.result.split('\n');
+        let importCount = 0;
         lines.forEach((line, i) => {
             if (i === 0) return; // Skip header
             if (!line.trim()) return;
@@ -476,9 +531,12 @@ function internalImportFromCSV(e) {
                     source: source,
                     done: false
                 });
+                importCount++;
             }
         });
         saveToLocalStorage();
+        renderCards();
+        showToast(`${importCount}개의 문장을 가져왔습니다.`);
         
         // AUTO-SWITCH TO STUDY
         bottomNavItems.forEach(n => n.classList.remove('active'));
@@ -488,17 +546,21 @@ function internalImportFromCSV(e) {
         
         internalUpdateCategory('all');
         showToast("가져오기 완료! 바로 학습을 시작합니다.");
+        e.target.value = ''; // Reset file input
     };
     reader.readAsText(file);
 }
 
 function downloadSampleCSV() {
-    const content = "Category,English,Korean,Usage\ntravel,Where is the nearest subway station?,가장 가까운 지하철역이 어디인가요?,교통편을 물을 때 필수인 문장입니다.";
-    const blob = new Blob(["\ufeff" + content], { type: 'text/csv;charset=utf-8;' });
+    const headers = "Category,English,Korean,Usage,Example,Origin\n";
+    const sampleRows = "daily,Hello,안녕하세요,일반적인 인사말,A: Hello!\nB: Hi there!,Sample (기본)\nbiz,Thank you for the update,업데이트 해주셔서 감사합니다,회의나 이메일 마무리,A: Thank you for the update.\nB: You're welcome!,Sample (기본)";
+    const uri = "data:text/csv;charset=utf-8,\ufeff" + encodeURIComponent(headers + sampleRows);
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = "sample.csv";
+    link.href = uri;
+    link.setAttribute("download", "mypocket_sample_format.csv");
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
 }
 
 // --- Utils ---
@@ -518,17 +580,49 @@ function showToast(msg) {
     setTimeout(() => toast.remove(), 2500);
 }
 
-// --- List Logic ---
+window.clearAllData = function() {
+    if (confirm("모든 학습 데이터와 AI 보관함이 초기화됩니다. 계속하시겠습니까?")) {
+        localStorage.clear();
+        location.reload();
+    }
+};
 
+// --- List Logic ---
 function renderMyList() {
     if (!myCardList) return;
     myCardList.innerHTML = '';
-    state.allCards.filter(c => c.source === 'ai_buddy').forEach(card => {
+    const myCards = state.allCards.filter(c => c.source === 'ai_buddy');
+    
+    if (myCards.length === 0) {
+        myCardList.innerHTML = '<div style="text-align:center; padding: 40px; color: rgba(255,255,255,0.4);">아직 저장된 영작이 없습니다.</div>';
+        return;
+    }
+
+    myCards.forEach(card => {
         const item = document.createElement('div');
         item.className = 'list-item';
-        item.innerHTML = `<div>${card.en}</div><button class="btn-delete" data-id="${card.id}">삭제</button>`;
+        item.innerHTML = `
+            <div class="list-item-content">
+                <div class="list-en">${card.en}</div>
+                <div class="list-ko">${card.ko}</div>
+            </div>
+            <button class="btn-delete" onclick="deleteCard('${card.id}')">
+                <i data-lucide="trash-2" style="width: 16px;"></i>
+            </button>
+        `;
         myCardList.appendChild(item);
     });
+    if (window.lucide) lucide.createIcons();
 }
+
+window.deleteCard = function(id) {
+    if (confirm("이 문장을 삭제할까요?")) {
+        state.allCards = state.allCards.filter(c => c.id !== id);
+        saveToLocalStorage();
+        renderMyList();
+        renderCards();
+        showToast("삭제되었습니다.");
+    }
+};
 
 init();
