@@ -1,5 +1,52 @@
-// MyPocket - Local Storage 기반 영어 학습 앱
-// Note: Gemini API는 REST 방식으로 직접 호출 (SDK 불필요)
+// MyPocket - Supabase 인증 + 사용자별 클라우드 저장 (비로그인 시 localStorage)
+import { createClient } from '@supabase/supabase-js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, isSupabaseConfigured } from './config.js';
+
+const supabase = isSupabaseConfigured()
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
+
+let currentUser = null;
+let syncInFlight = null;
+let syncQueued = false;
+/** 로그인 세션에서 클라우드(또는 명시적 마이그레이션) 로드가 끝나기 전엔 동기화하지 않음 */
+let cloudReady = false;
+let loadDataPromise = null;
+
+const LEGACY_CARDS_KEY = 'mypocket_cards';
+const GUEST_CARDS_KEY = 'mypocket_cards__guest';
+
+function cardsStorageKey(userId = currentUser?.id) {
+    return userId ? `mypocket_cards__${userId}` : GUEST_CARDS_KEY;
+}
+
+function migrateLegacyLocalCards() {
+    const legacy = localStorage.getItem(LEGACY_CARDS_KEY);
+    if (legacy === null) return;
+    if (localStorage.getItem(GUEST_CARDS_KEY) === null) {
+        localStorage.setItem(GUEST_CARDS_KEY, legacy);
+    }
+    localStorage.removeItem(LEGACY_CARDS_KEY);
+}
+
+function readStoredCards(userId = currentUser?.id) {
+    try {
+        const raw = localStorage.getItem(cardsStorageKey(userId));
+        if (raw === null) return null;
+        return JSON.parse(raw);
+    } catch (e) {
+        console.error('❌ LocalStorage 파싱 실패:', e);
+        return null;
+    }
+}
+
+function writeStoredCards(cards, userId = currentUser?.id) {
+    localStorage.setItem(cardsStorageKey(userId), JSON.stringify(cards));
+}
+
+function hasUserCreatedCards(cards) {
+    return (cards || []).some(c => c.source === 'ai_buddy' || c.source === 'csv' || c.source === 'user');
+}
 
 // --- GLOBAL EXPOSURE (CRITICAL FOR UI) ---
 window.updateCategory = (cat) => {
@@ -7,8 +54,7 @@ window.updateCategory = (cat) => {
 };
 window.clearAllData = () => {
     if (confirm("정말로 모든 데이터를 '완전 삭제'하고 초기화하시겠습니까? 샘플 데이터도 모두 삭제됩니다.")) {
-        localStorage.removeItem('mypocket_cards');
-        location.reload();
+        void resetAllData();
     }
 };
 window.importFromCSV = (e) => {
@@ -68,43 +114,400 @@ const myCardList = document.getElementById('my-card-list');
 const btnCsvExport = document.getElementById('btn-csv-export');
 const csvImport = document.getElementById('csv-import');
 
+const btnLogin = document.getElementById('btn-login');
+const btnLogout = document.getElementById('btn-logout');
+const authUserEl = document.getElementById('auth-user');
+const authEmailEl = document.getElementById('auth-email');
+const authModal = document.getElementById('auth-modal');
+const authForm = document.getElementById('auth-form');
+const authEmailInput = document.getElementById('auth-email-input');
+const authPasswordInput = document.getElementById('auth-password-input');
+const authErrorEl = document.getElementById('auth-error');
+const authSubmitBtn = document.getElementById('auth-submit');
+const authModalTitle = document.getElementById('auth-modal-title');
+const syncNotice = document.getElementById('sync-notice');
+
+let authMode = 'login';
+
 // --- Initialization ---
-function init() {
-    loadData();
+async function init() {
+    migrateLegacyLocalCards();
     setupEventListeners();
+    setupAuthUI();
+    await restoreSession();
+    await loadData();
     internalUpdateCategory('all');
     renderMyList();
+    updateAuthUI();
 }
 
-function loadData() {
+function mapRowToCard(row) {
+    return {
+        id: row.id,
+        cat: row.cat,
+        en: row.en,
+        ko: row.ko,
+        usage: row.usage || '',
+        ex: row.ex || '',
+        source: row.source || 'user',
+        done: !!row.done
+    };
+}
+
+function cardToRow(card) {
+    return {
+        id: card.id,
+        user_id: currentUser.id,
+        cat: card.cat,
+        en: card.en,
+        ko: card.ko,
+        usage: card.usage || '',
+        ex: card.ex || '',
+        source: card.source || 'user',
+        done: !!card.done
+    };
+}
+
+async function restoreSession() {
+    if (!supabase) {
+        console.warn('⚠️ Supabase 미설정: config.js 에 URL/anon key 를 넣어주세요.');
+        return;
+    }
+    const { data: { session } } = await supabase.auth.getSession();
+    currentUser = session?.user ?? null;
+    supabase.auth.onAuthStateChange(async (_event, nextSession) => {
+        const prevId = currentUser?.id;
+        currentUser = nextSession?.user ?? null;
+        updateAuthUI();
+        if (currentUser?.id && currentUser.id !== prevId) {
+            await loadData();
+            internalUpdateCategory(state.currentCategory);
+            renderMyList();
+        } else if (!currentUser && prevId) {
+            cloudReady = false;
+            enterGuestMode();
+            internalUpdateCategory(state.currentCategory);
+            renderMyList();
+        }
+    });
+}
+
+/** 비로그인(게스트) 데이터만 로드 — 다른 계정 캐시는 절대 읽지 않음 */
+function loadLocalOnly() {
+    const saved = readStoredCards(null);
+    if (saved !== null) {
+        state.allCards = saved;
+    } else {
+        state.allCards = [...PRESET_CARDS];
+        writeStoredCards(state.allCards, null);
+    }
+}
+
+function enterGuestMode() {
+    cloudReady = false;
+    loadLocalOnly();
+}
+
+async function loadData() {
+    if (loadDataPromise) return loadDataPromise;
+    loadDataPromise = loadDataInternal().finally(() => {
+        loadDataPromise = null;
+    });
+    return loadDataPromise;
+}
+
+async function loadDataInternal() {
+    if (!supabase || !currentUser) {
+        enterGuestMode();
+        const aiCards = state.allCards.filter(c => c.source === 'ai_buddy').length;
+        const csvCards = state.allCards.filter(c => c.source === 'csv').length;
+        console.log(`✅ Guest 로드: 총 ${state.allCards.length}개 (AI버디: ${aiCards}, CSV: ${csvCards})`);
+        return;
+    }
+
+    cloudReady = false;
+
     try {
-        const savedData = localStorage.getItem('mypocket_cards');
-        if (savedData !== null) {
-            state.allCards = JSON.parse(savedData);
-            const aiCards = state.allCards.filter(c => c.source === 'ai_buddy').length;
-            const csvCards = state.allCards.filter(c => c.source === 'csv').length;
-            console.log(`✅ LocalStorage 로드 완료: 총 ${state.allCards.length}개 (AI버디: ${aiCards}개, CSV: ${csvCards}개)`);
+        const { data, error } = await supabase
+            .from('cards')
+            .select('id, cat, en, ko, usage, ex, source, done, created_at')
+            .order('created_at', { ascending: true });
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+            state.allCards = data.map(mapRowToCard);
+            writeStoredCards(state.allCards, currentUser.id);
+            cloudReady = true;
+            console.log(`☁️ Cloud 로드: ${state.allCards.length}개`);
+            return;
+        }
+
+        // 클라우드가 비어 있을 때만: 게스트(비로그인) 데이터를 확인 후 가져오기
+        const guestCards = readStoredCards(null);
+        if (hasUserCreatedCards(guestCards)) {
+            const ok = confirm(
+                `이 브라우저(비로그인)에 저장된 카드 ${guestCards.length}개를\n` +
+                `지금 로그인한 계정으로 가져올까요?\n\n` +
+                `취소를 누르면 기본 카드로 새 계정을 시작합니다.`
+            );
+            if (ok) {
+                state.allCards = guestCards;
+                cloudReady = true;
+                await syncToCloud(true);
+                writeStoredCards(state.allCards, currentUser.id);
+                localStorage.removeItem(GUEST_CARDS_KEY);
+                showToast('브라우저 카드를 이 계정으로 가져왔습니다.');
+                return;
+            }
+        }
+
+        state.allCards = [...PRESET_CARDS];
+        cloudReady = true;
+        await syncToCloud(true);
+        writeStoredCards(state.allCards, currentUser.id);
+        showToast('새 계정용 기본 카드를 준비했습니다.');
+    } catch (e) {
+        console.error('❌ Cloud 로드 실패:', e);
+        // 이 계정의 캐시만 사용. 게스트/타인 데이터로 폴백·동기화하지 않음.
+        const cached = readStoredCards(currentUser.id);
+        if (cached && cached.length > 0) {
+            state.allCards = cached;
+            cloudReady = false; // 클라우드와 불일치 가능 → 업로드 금지
+            showToast('클라우드 연결 실패 — 이 계정 로컬 캐시만 표시합니다.');
         } else {
             state.allCards = [...PRESET_CARDS];
-            saveToLocalStorage();
-            console.log("✅ 최초 실행: 기본 카드를 LocalStorage에 저장했습니다.");
+            cloudReady = false;
+            showToast('클라우드 로드 실패 — 동기화는 일시 중지되었습니다.');
         }
-    } catch (e) {
-        console.error("❌ LocalStorage 로드 실패:", e);
-        state.allCards = [...PRESET_CARDS];
     }
 }
 
 function saveToLocalStorage() {
     try {
-        localStorage.setItem('mypocket_cards', JSON.stringify(state.allCards));
+        writeStoredCards(state.allCards);
         const aiCards = state.allCards.filter(c => c.source === 'ai_buddy').length;
         const csvCards = state.allCards.filter(c => c.source === 'csv').length;
-        console.log(`💾 저장 완료: 총 ${state.allCards.length}개 (AI버디: ${aiCards}개, CSV: ${csvCards}개, 기본: ${state.allCards.length - aiCards - csvCards}개)`);
+        console.log(`💾 저장: 총 ${state.allCards.length}개 (AI버디: ${aiCards}, CSV: ${csvCards})`);
     } catch (e) {
-        console.error("❌ LocalStorage 저장 실패:", e);
-        showToast("저장 중 오류가 발생했습니다.");
+        console.error('❌ LocalStorage 저장 실패:', e);
+        showToast('저장 중 오류가 발생했습니다.');
     }
+
+    if (supabase && currentUser && cloudReady) {
+        void syncToCloud(false);
+    }
+}
+
+async function syncToCloud(immediate = false) {
+    if (!supabase || !currentUser || !cloudReady) return;
+
+    if (syncInFlight) {
+        syncQueued = true;
+        if (!immediate) return;
+        await syncInFlight;
+    }
+
+    const run = async () => {
+        try {
+            const rows = state.allCards.map(cardToRow);
+            const { data: existing, error: listError } = await supabase.from('cards').select('id');
+            if (listError) throw listError;
+
+            const existingIds = new Set((existing || []).map(r => r.id));
+            const localIds = new Set(rows.map(r => r.id));
+            const toDelete = [...existingIds].filter(id => !localIds.has(id));
+
+            if (toDelete.length > 0) {
+                const { error: delError } = await supabase.from('cards').delete().in('id', toDelete);
+                if (delError) throw delError;
+            }
+
+            if (rows.length > 0) {
+                const { error: upsertError } = await supabase
+                    .from('cards')
+                    .upsert(rows, { onConflict: 'user_id,id' });
+                if (upsertError) throw upsertError;
+            }
+
+            writeStoredCards(state.allCards, currentUser.id);
+            console.log(`☁️ Cloud 동기화 완료: ${rows.length}개`);
+        } catch (e) {
+            console.error('❌ Cloud 동기화 실패:', e);
+            showToast('클라우드 동기화에 실패했습니다.');
+        }
+    };
+
+    syncInFlight = run();
+    await syncInFlight;
+    syncInFlight = null;
+
+    if (syncQueued) {
+        syncQueued = false;
+        await syncToCloud(true);
+    }
+}
+
+async function resetAllData() {
+    state.allCards = [...PRESET_CARDS];
+    writeStoredCards(state.allCards);
+
+    if (supabase && currentUser) {
+        try {
+            cloudReady = true;
+            const { error } = await supabase.from('cards').delete().eq('user_id', currentUser.id);
+            if (error) throw error;
+            await syncToCloud(true);
+        } catch (e) {
+            console.error('❌ Cloud 초기화 실패:', e);
+            showToast('클라우드 초기화에 실패했습니다.');
+        }
+    }
+
+    location.reload();
+}
+
+function updateAuthUI() {
+    const configured = !!supabase;
+    if (btnLogin) btnLogin.classList.toggle('hidden', !configured ? false : !!currentUser);
+    if (authUserEl) authUserEl.classList.toggle('hidden', !currentUser);
+    if (authEmailEl) authEmailEl.textContent = currentUser?.email || '';
+    if (!configured && btnLogin) {
+        btnLogin.textContent = '설정 필요';
+    } else if (btnLogin && !currentUser) {
+        btnLogin.textContent = '로그인';
+    }
+    if (syncNotice) {
+        syncNotice.textContent = currentUser
+            ? `☁️ ${currentUser.email} 계정에 동기화 중`
+            : '💡 로그인하면 클라우드에 동기화됩니다. 비로그인 시 이 브라우저에만 저장됩니다.';
+    }
+}
+
+function setupAuthUI() {
+    if (!btnLogin || !authModal) return;
+
+    btnLogin.addEventListener('click', () => {
+        if (!supabase) {
+            showToast('config.js에 Supabase URL/키를 먼저 설정하세요.');
+            return;
+        }
+        openAuthModal('login');
+    });
+
+    btnLogout?.addEventListener('click', async () => {
+        if (!supabase) return;
+        if (cloudReady) await syncToCloud(true);
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+            showToast('로그아웃 실패: ' + error.message);
+            return;
+        }
+        currentUser = null;
+        cloudReady = false;
+        // 공유 PC: 화면/게스트 저장소에 이전 계정 카드가 남지 않도록 게스트는 기본값으로
+        state.allCards = [...PRESET_CARDS];
+        writeStoredCards(state.allCards, null);
+        localStorage.removeItem(LEGACY_CARDS_KEY);
+        updateAuthUI();
+        internalUpdateCategory(state.currentCategory);
+        renderMyList();
+        showToast('로그아웃되었습니다. 이 화면의 카드는 초기화되었습니다.');
+    });
+
+    authModal.querySelectorAll('[data-close-auth]').forEach(el => {
+        el.addEventListener('click', closeAuthModal);
+    });
+
+    authModal.querySelectorAll('.auth-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            authMode = tab.dataset.authMode;
+            authModal.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            authModalTitle.textContent = authMode === 'signup' ? '회원가입' : '로그인';
+            authSubmitBtn.textContent = authMode === 'signup' ? '가입하기' : '로그인';
+            authPasswordInput.autocomplete = authMode === 'signup' ? 'new-password' : 'current-password';
+            hideAuthError();
+        });
+    });
+
+    authForm?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!supabase) return;
+
+        const email = authEmailInput.value.trim();
+        const password = authPasswordInput.value;
+        hideAuthError();
+        authSubmitBtn.disabled = true;
+        authSubmitBtn.textContent = '처리 중...';
+
+        try {
+            if (authMode === 'signup') {
+                const { data, error } = await supabase.auth.signUp({ email, password });
+                if (error) throw error;
+                if (data.session) {
+                    currentUser = data.user;
+                    closeAuthModal();
+                    showToast('가입 완료! 클라우드 동기화를 시작합니다.');
+                    await loadData();
+                    internalUpdateCategory(state.currentCategory);
+                    renderMyList();
+                    updateAuthUI();
+                } else {
+                    closeAuthModal();
+                    showToast('가입 메일 확인 후 로그인해 주세요.');
+                }
+            } else {
+                const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+                if (error) throw error;
+                currentUser = data.user;
+                closeAuthModal();
+                showToast('로그인되었습니다.');
+                await loadData();
+                internalUpdateCategory(state.currentCategory);
+                renderMyList();
+                updateAuthUI();
+            }
+        } catch (err) {
+            showAuthError(err.message || '인증에 실패했습니다.');
+        } finally {
+            authSubmitBtn.disabled = false;
+            authSubmitBtn.textContent = authMode === 'signup' ? '가입하기' : '로그인';
+        }
+    });
+}
+
+function openAuthModal(mode = 'login') {
+    authMode = mode;
+    authModal.classList.remove('hidden');
+    authModal.setAttribute('aria-hidden', 'false');
+    authModal.querySelectorAll('.auth-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.authMode === mode);
+    });
+    authModalTitle.textContent = mode === 'signup' ? '회원가입' : '로그인';
+    authSubmitBtn.textContent = mode === 'signup' ? '가입하기' : '로그인';
+    hideAuthError();
+    setTimeout(() => authEmailInput?.focus(), 50);
+    if (window.lucide) lucide.createIcons();
+}
+
+function closeAuthModal() {
+    authModal.classList.add('hidden');
+    authModal.setAttribute('aria-hidden', 'true');
+    authForm?.reset();
+    hideAuthError();
+}
+
+function showAuthError(msg) {
+    if (!authErrorEl) return;
+    authErrorEl.textContent = msg;
+    authErrorEl.classList.remove('hidden');
+}
+
+function hideAuthError() {
+    if (!authErrorEl) return;
+    authErrorEl.textContent = '';
+    authErrorEl.classList.add('hidden');
 }
 
 function setupEventListeners() {
@@ -608,8 +1011,7 @@ function showToast(msg) {
 
 window.clearAllData = function() {
     if (confirm("모든 학습 데이터와 AI 보관함이 초기화됩니다. 계속하시겠습니까?")) {
-        localStorage.clear();
-        location.reload();
+        void resetAllData();
     }
 };
 

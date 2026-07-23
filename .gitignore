@@ -6,3 +6,6 @@ Thumbs.db
 .idea/
 .env
 .gemini/
+.supabase_project_ref.txt
+.supabase_db_pass.txt
+.tmp_*.json

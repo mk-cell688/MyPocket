@@ -11,11 +11,11 @@
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="style.css">
-    <!-- Google Gemini SDK -->
     <script type="importmap">
       {
         "imports": {
-          "@google/generative-ai": "https://esm.sh/@google/generative-ai@latest"
+          "@google/generative-ai": "https://esm.sh/@google/generative-ai@latest",
+          "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2"
         }
       }
     </script>
@@ -28,7 +28,14 @@
                 <i data-lucide="book-open-check"></i>
                 <span>My Pocket</span>
             </div>
-            <div id="toast-container"></div>
+            <div class="header-actions">
+                <div id="auth-user" class="auth-user hidden">
+                    <span id="auth-email" class="auth-email"></span>
+                    <button type="button" id="btn-logout" class="btn-auth-ghost">로그아웃</button>
+                </div>
+                <button type="button" id="btn-login" class="btn-auth">로그인</button>
+                <div id="toast-container"></div>
+            </div>
         </header>
 
         <!-- Main Content Area -->
@@ -155,7 +162,7 @@
             <section id="list-panel" class="panel">
                 <div class="list-header">
                     <h2>My List</h2>
-                    <p class="notice">💡 데이터가 브라우저에 직접 저장됩니다.</p>
+                    <p class="notice" id="sync-notice">💡 로그인하면 클라우드에 동기화됩니다. 비로그인 시 이 브라우저에만 저장됩니다.</p>
                 </div>
 
                 <div id="my-card-list" class="my-card-list">
@@ -219,6 +226,36 @@
                 <span>내 목록</span>
             </button>
         </footer>
+    </div>
+
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="auth-modal hidden" aria-hidden="true">
+        <div class="auth-modal-backdrop" data-close-auth></div>
+        <div class="auth-modal-card" role="dialog" aria-labelledby="auth-modal-title">
+            <button type="button" class="auth-modal-close" data-close-auth aria-label="닫기">
+                <i data-lucide="x"></i>
+            </button>
+            <h3 id="auth-modal-title">로그인</h3>
+            <p class="auth-modal-desc">계정으로 로그인하면 카드가 클라우드에 저장되고, 다른 기기에서도 이어볼 수 있어요.</p>
+
+            <div class="auth-tabs">
+                <button type="button" class="auth-tab active" data-auth-mode="login">로그인</button>
+                <button type="button" class="auth-tab" data-auth-mode="signup">회원가입</button>
+            </div>
+
+            <form id="auth-form" class="auth-form">
+                <label class="auth-label">
+                    이메일
+                    <input type="email" id="auth-email-input" required placeholder="you@email.com" autocomplete="email">
+                </label>
+                <label class="auth-label">
+                    비밀번호
+                    <input type="password" id="auth-password-input" required minlength="6" placeholder="6자 이상" autocomplete="current-password">
+                </label>
+                <p id="auth-error" class="auth-error hidden"></p>
+                <button type="submit" id="auth-submit" class="btn btn-primary btn-block">로그인</button>
+            </form>
+        </div>
     </div>
 
     <!-- Lucide Initialization -->
