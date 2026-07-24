@@ -72,7 +72,18 @@ let state = {
     sessionTotal: 0, // Total cards in current category at session start
     currentCategory: 'all',
     streak: 0,
-    isGenerating: false
+    isGenerating: false,
+    studyMode: 'normal', // normal | review
+    coach: {
+        situation: '',
+        cat: 'travel',
+        turns: [],
+        suggest: null
+    },
+    dictation: {
+        card: null,
+        revealed: false
+    }
 };
 
 // --- Data: Preset Flashcards ---
@@ -143,6 +154,8 @@ async function init() {
     internalUpdateCategory('all');
     renderMyList();
     updateAuthUI();
+    refreshReviewSummary();
+    if (window.lucide) lucide.createIcons();
 }
 
 function mapRowToCard(row) {
@@ -518,21 +531,16 @@ function setupEventListeners() {
     bottomNavItems.forEach(item => {
         item.addEventListener('click', () => {
             const targetPanel = item.dataset.panel;
-            bottomNavItems.forEach(nav => nav.classList.remove('active'));
-            item.classList.add('active');
-            panels.forEach(panel => {
-                panel.classList.remove('active');
-                if (panel.id === targetPanel) panel.classList.add('active');
-            });
-            if (targetPanel === 'list-panel') renderMyList();
-            if (targetPanel === 'study-panel') internalUpdateCategory(state.currentCategory);
+            if (targetPanel === 'study-panel') state.studyMode = 'normal';
+            switchToPanel(targetPanel);
         });
     });
 
     categoryTabs.addEventListener('click', (e) => {
         if (e.target.classList.contains('tab-item')) {
-            document.querySelectorAll('.tab-item').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('#category-tabs .tab-item').forEach(btn => btn.classList.remove('active'));
             e.target.classList.add('active');
+            state.studyMode = 'normal';
             internalUpdateCategory(e.target.dataset.cat);
         }
     });
@@ -564,7 +572,6 @@ function setupEventListeners() {
         speakEnglish(text);
     });
 
-    // 일부 브라우저는 음성 목록을 늦게 로드함
     if (window.speechSynthesis) {
         window.speechSynthesis.getVoices();
         window.speechSynthesis.onvoiceschanged = () => {
@@ -588,6 +595,66 @@ function setupEventListeners() {
 
     btnAiGenerate.addEventListener('click', handleAiGenerate);
     btnAddToPocket.addEventListener('click', internalHandleAddToPocket);
+
+    // AI sub-tabs + coach/correct
+    document.querySelectorAll('#ai-sub-tabs .sub-tab').forEach(btn => {
+        btn.addEventListener('click', () => switchAiTab(btn.dataset.aiTab));
+    });
+    document.querySelectorAll('.coach-cat-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.coach-cat-btn').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+        });
+    });
+    document.querySelectorAll('.correct-tone-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.correct-tone-btn').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+        });
+    });
+    document.getElementById('btn-coach-start')?.addEventListener('click', () => void startCoachSession());
+    document.getElementById('btn-coach-send')?.addEventListener('click', () => void sendCoachReply(false));
+    document.getElementById('btn-coach-hint')?.addEventListener('click', () => void sendCoachReply(true));
+    document.getElementById('btn-coach-reset')?.addEventListener('click', resetCoach);
+    document.getElementById('btn-coach-save')?.addEventListener('click', () => {
+        const s = state.coach.suggest;
+        if (!s?.en) return;
+        addCardToPocket({
+            cat: state.coach.cat || 'daily',
+            en: s.en,
+            ko: s.ko || '',
+            usage: s.tip || '대화 코치 추천 표현',
+            ex: ''
+        });
+        showToast('포켓에 저장되었습니다!');
+    });
+    document.getElementById('btn-correct')?.addEventListener('click', () => void runCorrection());
+    document.getElementById('btn-speak-correct')?.addEventListener('click', () => {
+        speakEnglish(document.getElementById('correct-result-en')?.textContent || '');
+    });
+    document.getElementById('btn-correct-save')?.addEventListener('click', () => {
+        const en = document.getElementById('correct-result-en')?.textContent?.trim();
+        if (!en) return;
+        addCardToPocket({
+            cat: 'daily',
+            en,
+            ko: document.getElementById('correct-result-ko')?.textContent || '',
+            usage: document.getElementById('correct-result-feedback')?.textContent || '',
+            ex: document.getElementById('correct-result-ex')?.innerText || ''
+        });
+        showToast('포켓에 저장되었습니다!');
+    });
+
+    // Practice
+    document.querySelectorAll('#practice-sub-tabs .sub-tab').forEach(btn => {
+        btn.addEventListener('click', () => switchPracticeTab(btn.dataset.practiceTab));
+    });
+    document.getElementById('btn-review-start')?.addEventListener('click', startReviewSession);
+    document.getElementById('btn-dictation-start')?.addEventListener('click', () => startDictation());
+    document.getElementById('btn-dictation-replay')?.addEventListener('click', () => replayDictation(false));
+    document.getElementById('btn-dictation-slow')?.addEventListener('click', () => replayDictation(true));
+    document.getElementById('btn-dictation-check')?.addEventListener('click', checkDictation);
+    document.getElementById('btn-dictation-next')?.addEventListener('click', () => startDictation());
 
     btnCsvExport.addEventListener('click', exportToCSV);
     csvImport.addEventListener('change', internalImportFromCSV);
@@ -633,7 +700,11 @@ function renderCurrentCard() {
     
     // Toggle Button Text based on category
     const btnDoneText = btnDone.querySelector('span');
-    if (state.currentCategory === 'done') {
+    if (state.studyMode === 'review') {
+        btnDoneText.textContent = '기억남';
+        btnDone.classList.add('btn-primary');
+        btnDone.classList.remove('btn-relearn', 'btn-secondary');
+    } else if (state.currentCategory === 'done') {
         btnDoneText.textContent = "다시 암기 필요";
         btnDone.classList.add('btn-relearn');
         btnDone.classList.remove('btn-primary', 'btn-secondary');
@@ -707,7 +778,7 @@ function stopSpeaking() {
     setSpeakingUi(false);
 }
 
-function speakEnglish(text) {
+function speakEnglish(text, rate = 0.92) {
     const clean = (text || '').replace(/\s+/g, ' ').trim();
     if (!clean) {
         showToast('읽을 영어 문장이 없습니다.');
@@ -721,7 +792,7 @@ function speakEnglish(text) {
     stopSpeaking();
     const utter = new SpeechSynthesisUtterance(clean);
     utter.lang = 'en-US';
-    utter.rate = 0.92;
+    utter.rate = rate;
     utter.pitch = 1;
     const voice = getEnglishVoice();
     if (voice) utter.voice = voice;
@@ -733,7 +804,6 @@ function speakEnglish(text) {
         showToast('음성 재생에 실패했습니다.');
     };
 
-    // Chrome: voices가 비어 있으면 한 박자 뒤 재시도
     if (!voice && window.speechSynthesis.getVoices().length === 0) {
         window.speechSynthesis.getVoices();
         setTimeout(() => {
@@ -762,11 +832,20 @@ function handleCardAction(action) {
     if (action === 'done') {
         const masterIdx = state.allCards.findIndex(c => c.id === currentCard.id);
         if (masterIdx !== -1) {
-            state.allCards[masterIdx].done = (state.currentCategory !== 'done');
-            saveToLocalStorage();
+            if (state.studyMode === 'review') {
+                scheduleSrs(currentCard.id, 3);
+            } else {
+                state.allCards[masterIdx].done = (state.currentCategory !== 'done');
+                saveToLocalStorage();
+            }
+        } else if (state.studyMode === 'review') {
+            scheduleSrs(currentCard.id, 3);
         }
         state.currentQueue.shift();
     } else {
+        if (state.studyMode === 'review') {
+            scheduleSrs(currentCard.id, 1);
+        }
         const cardToRepeat = state.currentQueue.shift();
         state.currentQueue.push(cardToRepeat);
     }
@@ -775,6 +854,13 @@ function handleCardAction(action) {
     if (state.sessionTotal > 0 && state.currentIndex > state.sessionTotal) {
         state.currentIndex = 1;
     }
+
+    if (state.studyMode === 'review' && state.currentQueue.length === 0) {
+        state.studyMode = 'normal';
+        refreshReviewSummary();
+        showToast('복습 세션 완료! 수고했어요.');
+    }
+
     renderCurrentCard();
 }
 
@@ -818,19 +904,509 @@ window.changeApiKey = async () => {
     if (newKey) showToast("✅ API 키가 성공적으로 저장되었습니다!");
 };
 
+// --- Gemini shared helper ---
+async function ensureGeminiApiKey() {
+    let apiKey = localStorage.getItem('GEMINI_API_KEY');
+    if (!apiKey) {
+        apiKey = await showApiKeyModal();
+    }
+    return apiKey;
+}
+
+function parseGeminiJson(rawText) {
+    const cleanText = rawText.replace(/```json|```/g, '').trim();
+    try {
+        return JSON.parse(cleanText);
+    } catch (_) {
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) return JSON.parse(jsonMatch[0]);
+        throw new Error('AI 응답 데이터 분석에 실패했습니다.');
+    }
+}
+
+async function callGeminiJson(prompt) {
+    const apiKey = await ensureGeminiApiKey();
+    if (!apiKey) throw new Error('API_KEY_REQUIRED');
+
+    const PREFERRED_MODELS = [
+        'models/gemini-2.5-flash',
+        'models/gemini-3.1-flash-lite-preview',
+        'models/gemini-2.5-pro',
+        'models/gemini-3.1-flash-preview',
+        'models/gemini-3-flash-preview'
+    ];
+
+    let resData = null;
+    let lastError = '';
+    const errorReport = [];
+
+    for (const modelId of PREFERRED_MODELS) {
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/${modelId}:generateContent?key=${apiKey}`;
+        await new Promise(r => setTimeout(r, 250));
+
+        let genRetryCount = 0;
+        const tryThisModel = async () => {
+            const res = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+            });
+            if (res.status === 503 && genRetryCount < 1) {
+                genRetryCount++;
+                await new Promise(r => setTimeout(r, 1000));
+                return tryThisModel();
+            }
+            return res;
+        };
+
+        const response = await tryThisModel();
+        if (response.ok) {
+            resData = await response.json();
+            break;
+        }
+        const errJson = await response.json().catch(() => ({}));
+        lastError = errJson.error?.message || 'Unknown error';
+        errorReport.push(`${modelId.split('/').pop()}(${response.status})`);
+        if ([404, 429, 503].includes(response.status)) continue;
+        throw new Error(`API Error ${response.status}: ${lastError}`);
+    }
+
+    if (!resData) {
+        throw new Error(`모든 가용 모델(${errorReport.join(', ')})의 한도가 초과되었습니다. 잠시 후 다시 시도해 주세요.`);
+    }
+
+    const rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    return parseGeminiJson(rawText);
+}
+
+function handleGeminiError(e, fallbackMsg) {
+    const errMsg = e?.message || '';
+    if (errMsg === 'API_KEY_REQUIRED') {
+        showToast('AI 기능을 쓰려면 API 키가 필요합니다.');
+        return;
+    }
+    if (errMsg.includes('400') || errMsg.includes('API_KEY_INVALID')) {
+        localStorage.removeItem('GEMINI_API_KEY');
+        showToast('API 키가 올바르지 않습니다. 새 키를 입력해 주세요.');
+        setTimeout(() => showApiKeyModal('🔑 API 키 재등록', '입력하신 키가 유효하지 않습니다.<br>구글 AI Studio에서 새 키를 발급받아 입력해 주세요.'), 500);
+        return;
+    }
+    if (errMsg.includes('429')) {
+        showToast('[한도 초과] 구글 AI가 잠시 바쁩니다. 약 30초 뒤에 다시 시도해 주세요.');
+        return;
+    }
+    showToast((fallbackMsg || '에러') + ': ' + errMsg.substring(0, 80));
+}
+
+function addCardToPocket(partial) {
+    const newCard = {
+        id: 'user_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+        cat: partial.cat || 'daily',
+        en: partial.en,
+        ko: partial.ko || '',
+        usage: partial.usage || '',
+        ex: partial.ex || '',
+        source: 'ai_buddy',
+        done: false
+    };
+    state.allCards.push(newCard);
+    saveToLocalStorage();
+    return newCard;
+}
+
+// --- SRS (local, per account/guest) ---
+function srsStorageKey() {
+    return currentUser?.id ? `mypocket_srs__${currentUser.id}` : 'mypocket_srs__guest';
+}
+
+function loadSrsMap() {
+    try {
+        return JSON.parse(localStorage.getItem(srsStorageKey()) || '{}');
+    } catch (_) {
+        return {};
+    }
+}
+
+function saveSrsMap(map) {
+    localStorage.setItem(srsStorageKey(), JSON.stringify(map));
+}
+
+function getSrsEntry(cardId, map = loadSrsMap()) {
+    return map[cardId] || { due: 0, interval: 0, ease: 2.5, reps: 0, lapses: 0 };
+}
+
+function scheduleSrs(cardId, quality) {
+    // quality: 0 fail, 1 hard/again, 3 good (외웠어요)
+    const map = loadSrsMap();
+    const s = getSrsEntry(cardId, map);
+    const now = Date.now();
+    if (quality <= 1) {
+        s.lapses = (s.lapses || 0) + 1;
+        s.reps = 0;
+        s.interval = 0;
+        s.due = now + 10 * 60 * 1000; // 10분 후
+        s.ease = Math.max(1.3, (s.ease || 2.5) - 0.2);
+    } else {
+        s.reps = (s.reps || 0) + 1;
+        if (s.reps === 1) s.interval = 1;
+        else if (s.reps === 2) s.interval = 3;
+        else s.interval = Math.round((s.interval || 1) * (s.ease || 2.5));
+        s.ease = Math.min(3.0, (s.ease || 2.5) + 0.05);
+        s.due = now + s.interval * 24 * 60 * 60 * 1000;
+    }
+    s.last = now;
+    map[cardId] = s;
+    saveSrsMap(map);
+    return s;
+}
+
+function getReviewCandidates(limit = 8) {
+    const now = Date.now();
+    const map = loadSrsMap();
+    const pool = state.allCards.filter(c => c.done !== true);
+    const scored = pool.map(c => {
+        const s = getSrsEntry(c.id, map);
+        const overdue = (s.due || 0) <= now;
+        const never = !s.reps;
+        const priority = never ? 0 : (overdue ? 1 : 2);
+        const dueScore = s.due || 0;
+        const lapseBoost = (s.lapses || 0) * 1e11;
+        return { card: c, s, priority, sortKey: priority * 1e15 + dueScore - lapseBoost };
+    });
+    scored.sort((a, b) => a.sortKey - b.sortKey);
+    const dueOrNew = scored.filter(x => x.priority <= 1);
+    const picked = (dueOrNew.length >= limit ? dueOrNew : scored).slice(0, limit);
+    return picked.map(x => x.card);
+}
+
+function refreshReviewSummary() {
+    const el = document.getElementById('review-summary');
+    if (!el) return;
+    const map = loadSrsMap();
+    const now = Date.now();
+    const active = state.allCards.filter(c => c.done !== true);
+    let due = 0;
+    let fresh = 0;
+    active.forEach(c => {
+        const s = getSrsEntry(c.id, map);
+        if (!s.reps) fresh++;
+        else if ((s.due || 0) <= now) due++;
+    });
+    el.textContent = `복습 대기 ${due}장 · 아직 스케줄 없는 카드 ${fresh}장 · 전체 학습 중 ${active.length}장`;
+}
+
+function startReviewSession() {
+    const count = Number(document.getElementById('review-count')?.value || 8);
+    const cards = getReviewCandidates(count);
+    if (!cards.length) {
+        showToast('복습할 카드가 없습니다. 학습 탭에서 카드를 먼저 추가해 보세요.');
+        return;
+    }
+    state.studyMode = 'review';
+    state.currentQueue = shuffleArray([...cards]);
+    state.sessionTotal = state.currentQueue.length;
+    state.currentIndex = 1;
+    switchToPanel('study-panel');
+    showToast(`복습 세션 ${state.sessionTotal}장 시작!`);
+    renderCurrentCard();
+}
+
+function switchToPanel(panelId) {
+    bottomNavItems.forEach(nav => {
+        nav.classList.toggle('active', nav.dataset.panel === panelId);
+    });
+    panels.forEach(panel => {
+        panel.classList.toggle('active', panel.id === panelId);
+    });
+    if (panelId === 'list-panel') renderMyList();
+    if (panelId === 'practice-panel') refreshReviewSummary();
+    if (panelId === 'study-panel' && state.studyMode === 'normal') {
+        internalUpdateCategory(state.currentCategory);
+    }
+    if (window.lucide) lucide.createIcons();
+}
+
+function switchAiTab(tab) {
+    document.querySelectorAll('#ai-sub-tabs .sub-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.aiTab === tab);
+    });
+    document.getElementById('ai-tab-write')?.classList.toggle('hidden', tab !== 'write');
+    document.getElementById('ai-tab-coach')?.classList.toggle('hidden', tab !== 'coach');
+    document.getElementById('ai-tab-correct')?.classList.toggle('hidden', tab !== 'correct');
+    const desc = document.getElementById('ai-header-desc');
+    if (desc) {
+        desc.textContent =
+            tab === 'coach' ? '상황을 정하면 AI가 상대역이 되어 영어로 대화합니다.' :
+            tab === 'correct' ? '내가 쓴 영어를 더 자연스럽게 고쳐 줍니다.' :
+            '한국어 의도를 영어 표현으로 만들어 포켓에 넣어요.';
+    }
+}
+
+function switchPracticeTab(tab) {
+    document.querySelectorAll('#practice-sub-tabs .sub-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.practiceTab === tab);
+    });
+    document.getElementById('practice-tab-review')?.classList.toggle('hidden', tab !== 'review');
+    document.getElementById('practice-tab-dictation')?.classList.toggle('hidden', tab !== 'dictation');
+    if (tab === 'review') refreshReviewSummary();
+}
+
+function renderCoachChat() {
+    const box = document.getElementById('coach-chat');
+    if (!box) return;
+    box.innerHTML = '';
+    state.coach.turns.forEach(t => {
+        const div = document.createElement('div');
+        div.className = `coach-bubble ${t.role}`;
+        const prefix = t.role === 'npc' ? '상대' : t.role === 'user' ? '나' : '코치';
+        div.textContent = `${prefix}: ${t.text}`;
+        box.appendChild(div);
+    });
+    box.classList.remove('hidden');
+    box.scrollTop = box.scrollHeight;
+}
+
+function showCoachSuggest(suggest) {
+    state.coach.suggest = suggest;
+    const wrap = document.getElementById('coach-suggest');
+    if (!wrap || !suggest) return;
+    document.getElementById('coach-suggest-en').textContent = suggest.en || '';
+    document.getElementById('coach-suggest-ko').textContent = suggest.ko || '';
+    document.getElementById('coach-suggest-tip').textContent = suggest.tip || '';
+    wrap.classList.remove('hidden');
+}
+
+async function startCoachSession() {
+    const situation = document.getElementById('coach-situation')?.value.trim();
+    if (!situation) {
+        showToast('상황을 먼저 입력해 주세요.');
+        return;
+    }
+    const catBtn = document.querySelector('.coach-cat-btn.selected');
+    const cat = catBtn?.dataset.cat || 'travel';
+    const btn = document.getElementById('btn-coach-start');
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="spin"></i> 시작 중...';
+    if (window.lucide) lucide.createIcons();
+
+    try {
+        const data = await callGeminiJson(`
+당신은 영어 회화 상황 코치입니다.
+상황: "${situation}"
+카테고리: ${cat}
+역할: 현지인/상대역(NPC)으로 영어 대화를 시작하세요.
+사용자가 영어로 답하면 이어서 대화합니다.
+
+반드시 JSON만 응답:
+{
+  "npc": "상대의 첫 영어 대사 (1-2문장)",
+  "coach_tip": "한국어로 짧게 상황 힌트",
+  "suggest": { "en": "이 상황에서 유용한 영어 한 문장", "ko": "뜻", "tip": "왜 유용한지" }
+}
+`);
+        state.coach = { situation, cat, turns: [], suggest: null };
+        state.coach.turns.push({ role: 'npc', text: data.npc });
+        if (data.coach_tip) state.coach.turns.push({ role: 'coach', text: data.coach_tip });
+        renderCoachChat();
+        document.getElementById('coach-reply-box')?.classList.remove('hidden');
+        if (data.suggest?.en) showCoachSuggest(data.suggest);
+        speakEnglish(data.npc);
+    } catch (e) {
+        console.error(e);
+        handleGeminiError(e, '대화 시작 실패');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="messages-square"></i><span>대화 시작</span>';
+        if (window.lucide) lucide.createIcons();
+    }
+}
+
+async function sendCoachReply(asHint = false) {
+    if (!state.coach.situation) {
+        showToast('먼저 대화를 시작해 주세요.');
+        return;
+    }
+    const input = document.getElementById('coach-user-input');
+    const userText = (input?.value || '').trim();
+    if (!asHint && !userText) {
+        showToast('영어 대답을 입력해 주세요.');
+        return;
+    }
+
+    const btn = document.getElementById(asHint ? 'btn-coach-hint' : 'btn-coach-send');
+    btn.disabled = true;
+    try {
+        if (!asHint) {
+            state.coach.turns.push({ role: 'user', text: userText });
+            input.value = '';
+            renderCoachChat();
+        }
+        const history = state.coach.turns.map(t => `${t.role}: ${t.text}`).join('\n');
+        const data = await callGeminiJson(`
+영어 회화 코치입니다. 상황: "${state.coach.situation}" (카테고리: ${state.coach.cat})
+대화 기록:
+${history}
+
+요청: ${asHint ? '사용자가 막혔습니다. 바로 쓸 수 있는 영어 대답 예시와 짧은 설명을 주세요. NPC 대사는 이어가지 말고 힌트만.' : '사용자 영어를 짧게 피드백하고, NPC로서 자연스럽게 다음 대사를 이어가세요.'}
+
+JSON만:
+{
+  "feedback": "한국어 피드백 (틀린 점/더 자연스러운 표현)",
+  "npc": "상대의 다음 영어 대사 (힌트 모드면 빈 문자열)",
+  "suggest": { "en": "저장할 추천 영어", "ko": "뜻", "tip": "팁" }
+}
+`);
+        if (data.feedback) state.coach.turns.push({ role: 'coach', text: data.feedback });
+        if (data.npc) {
+            state.coach.turns.push({ role: 'npc', text: data.npc });
+            speakEnglish(data.npc);
+        }
+        renderCoachChat();
+        if (data.suggest?.en) showCoachSuggest(data.suggest);
+    } catch (e) {
+        console.error(e);
+        handleGeminiError(e, '대화 실패');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function resetCoach() {
+    state.coach = { situation: '', cat: 'travel', turns: [], suggest: null };
+    document.getElementById('coach-chat')?.classList.add('hidden');
+    document.getElementById('coach-reply-box')?.classList.add('hidden');
+    document.getElementById('coach-suggest')?.classList.add('hidden');
+    const chat = document.getElementById('coach-chat');
+    if (chat) chat.innerHTML = '';
+    showToast('대화를 초기화했습니다.');
+}
+
+async function runCorrection() {
+    const en = document.getElementById('correct-en')?.value.trim();
+    const ko = document.getElementById('correct-ko')?.value.trim();
+    if (!en) {
+        showToast('교정할 영어 문장을 입력해 주세요.');
+        return;
+    }
+    const tone = document.querySelector('.correct-tone-btn.selected')?.dataset.tone || 'general';
+    const btn = document.getElementById('btn-correct');
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="spin"></i> 교정 중...';
+    if (window.lucide) lucide.createIcons();
+
+    try {
+        const data = await callGeminiJson(`
+영어 교정 멘토입니다.
+사용자 영어: "${en}"
+의도(한국어, 선택): "${ko || '없음'}"
+톤: ${tone} (official/general/casual)
+
+JSON만 응답:
+{
+  "en": "교정된 자연스러운 영어",
+  "ko": "한글 뜻",
+  "feedback": "무엇이 어색했는지, 왜 고쳤는지 (한국어)",
+  "ex": "A: ... B: ... 짧은 대화 예문"
+}
+`);
+        document.getElementById('correct-result-en').textContent = data.en || '';
+        document.getElementById('correct-result-ko').textContent = data.ko || '';
+        document.getElementById('correct-result-feedback').textContent = data.feedback || '';
+        let spacedEx = (data.ex || '');
+        spacedEx = spacedEx.replace(/\s*([A-Z]:)/g, '\n\n$1').trim();
+        document.getElementById('correct-result-ex').innerText = spacedEx;
+        document.getElementById('correct-result')?.classList.remove('hidden');
+    } catch (e) {
+        console.error(e);
+        handleGeminiError(e, '교정 실패');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="spell-check"></i><span>교정받기</span>';
+        if (window.lucide) lucide.createIcons();
+    }
+}
+
+function normalizeDictation(text) {
+    return (text || '')
+        .toLowerCase()
+        .replace(/[^\w\s']/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function pickDictationCard() {
+    const pool = state.allCards.filter(c => c.en && c.done !== true);
+    if (!pool.length) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function startDictation(card = null) {
+    const picked = card || pickDictationCard();
+    if (!picked) {
+        showToast('받아쓰기할 카드가 없습니다.');
+        return;
+    }
+    state.dictation = { card: picked, revealed: false };
+    const area = document.getElementById('dictation-area');
+    const input = document.getElementById('dictation-input');
+    const feedback = document.getElementById('dictation-feedback');
+    const nextBtn = document.getElementById('btn-dictation-next');
+    area?.classList.remove('hidden');
+    feedback?.classList.add('hidden');
+    nextBtn?.classList.add('hidden');
+    if (input) input.value = '';
+    speakEnglish(picked.en);
+    showToast('잘 듣고 받아 적어 보세요.');
+}
+
+function replayDictation(slow = false) {
+    if (!state.dictation.card) {
+        showToast('먼저 새 문제를 시작해 주세요.');
+        return;
+    }
+    if (slow) {
+        // temporarily slower via utterance rate in speakEnglish - add optional rate param
+        speakEnglish(state.dictation.card.en, 0.75);
+    } else {
+        speakEnglish(state.dictation.card.en);
+    }
+}
+
+function checkDictation() {
+    const card = state.dictation.card;
+    if (!card) return;
+    const input = document.getElementById('dictation-input')?.value || '';
+    const answer = normalizeDictation(card.en);
+    const typed = normalizeDictation(input);
+    const feedback = document.getElementById('dictation-feedback');
+    const nextBtn = document.getElementById('btn-dictation-next');
+    if (!typed) {
+        showToast('답을 입력해 주세요.');
+        return;
+    }
+
+    const ok = typed === answer;
+    state.dictation.revealed = true;
+    scheduleSrs(card.id, ok ? 3 : 0);
+    refreshReviewSummary();
+
+    if (feedback) {
+        feedback.classList.remove('hidden', 'ok', 'bad');
+        feedback.classList.add(ok ? 'ok' : 'bad');
+        feedback.innerHTML = ok
+            ? `<strong>정답!</strong><br>${card.en}<br><span style="opacity:.85">${card.ko || ''}</span>`
+            : `<strong>아쉬워요.</strong><br>내 답: ${input}<br>정답: <strong>${card.en}</strong><br>${card.ko || ''}`;
+    }
+    nextBtn?.classList.remove('hidden');
+    showToast(ok ? '훌륭해요! 🔥' : '정답을 확인해 보세요.');
+}
+
 // --- AI Buddy Logic ---
 async function handleAiGenerate() {
     const inputKo = aiInputKo.value.trim();
     const inputEn = aiInputEn.value.trim();
-    
-    // 키가 없을 때만 모달 표시 (저장된 키는 계속 재사용)
-    let apiKey = localStorage.getItem('GEMINI_API_KEY');
-    if (!apiKey) {
-        apiKey = await showApiKeyModal();
-        if (!apiKey) { showToast("영작하려면 API 키가 필요합니다."); return; }
-    }
-    
-    if (!inputKo) { showToast("한국어 의도를 먼저 입력해주세요!"); return; }
+
+    if (!inputKo) { showToast('한국어 의도를 먼저 입력해주세요!'); return; }
 
     const catBtn = document.querySelector('.ai-cat-btn.selected');
     const toneBtn = document.querySelector('.ai-tone-btn.selected');
@@ -869,110 +1445,19 @@ async function handleAiGenerate() {
     `;
 
     try {
-        // --- 1. 모델 설정 (하드코딩을 통한 안정성 확보) ---
-        const PREFERRED_MODELS = [
-            'models/gemini-2.5-flash',
-            'models/gemini-3.1-flash-lite-preview',
-            'models/gemini-2.5-pro',
-            'models/gemini-3.1-pro-preview',
-            'models/gemini-3-flash-preview'
-        ];
-
-        // --- 2. Generation with Model Fallback ---
-        let resData = null;
-        let lastError = "";
-        let errorReport = [];
-
-        for (const modelId of PREFERRED_MODELS) {
-            const API_URL = `https://generativelanguage.googleapis.com/v1beta/${modelId}:generateContent?key=${apiKey}`;
-            
-            console.log(`Trying model: ${modelId}`);
-            await new Promise(r => setTimeout(r, 300)); // Short delay between model attempts
-            
-            let genRetryCount = 0;
-            const maxRetries = 1;
-            
-            // Nested function to handle 503 retries for CURRENT model
-            const tryThisModel = async () => {
-                const res = await fetch(API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-                });
-
-                if (res.status === 503 && genRetryCount < maxRetries) {
-                    genRetryCount++;
-                    await new Promise(r => setTimeout(r, 1000));
-                    return tryThisModel();
-                }
-                return res;
-            };
-
-            const response = await tryThisModel();
-
-            if (response.ok) {
-                resData = await response.json();
-                console.log(`Success with ${modelId}`);
-                break;
-            } else {
-                const errJson = await response.json().catch(() => ({}));
-                lastError = errJson.error?.message || "Unknown error";
-                errorReport.push(`${modelId.split('/').pop()}(${response.status})`);
-                
-                if ([404, 429, 503].includes(response.status)) {
-                    console.warn(`Model ${modelId} failed with ${response.status}, skipping...`);
-                    continue; 
-                } else {
-                    throw new Error(`API Error ${response.status}: ${lastError}`);
-                }
-            }
-        }
-
-        if (!resData) {
-            throw new Error(`모든 가용 모델(${errorReport.join(', ')})의 한도가 초과되었습니다. 잠시 후 다시 시도해 주세요.`);
-        }
-
-        const rawText = resData.candidates[0].content.parts[0].text;
-        
-        // Robust JSON Extraction
-        let data;
-        try {
-            const cleanText = rawText.replace(/```json|```/g, "").trim();
-            data = JSON.parse(cleanText);
-        } catch (parseErr) {
-            const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-            if (jsonMatch) data = JSON.parse(jsonMatch[0]);
-            else throw new Error("AI 응답 데이터 분석에 실패했습니다.");
-        }
-
+        const data = await callGeminiJson(prompt);
         aiResultEn.textContent = data.en;
         aiResultKo.textContent = data.ko;
         aiResultUsage.textContent = data.usage;
-        // Force double spacing for dialogue (Even if AI sent it in one line)
-        // This splits "A: ... B: ..." into separate lines with a gap
-        let spacedEx = (data.ex || "");
-        // If it starts with A: but has B: later without a newline, force it
-        spacedEx = spacedEx.replace(/\s*([A-Z]:)/g, "\n\n$1").trim();
+        let spacedEx = (data.ex || '');
+        spacedEx = spacedEx.replace(/\s*([A-Z]:)/g, '\n\n$1').trim();
         aiResultEx.innerText = spacedEx;
-        
         aiResult.classList.remove('hidden');
         btnAddToPocket.disabled = false;
-        btnAddToPocket.textContent = "학습 포켓에 넣기";
+        btnAddToPocket.textContent = '학습 포켓에 넣기';
     } catch (e) {
-        console.error("AI Buddy Detailed Error:", e);
-        
-        const errMsg = e.message || "";
-        if (errMsg.includes("400") || errMsg.includes("API_KEY_INVALID")) {
-            localStorage.removeItem('GEMINI_API_KEY');
-            showToast("API 키가 올바르지 않습니다. 새 키를 입력해 주세요.");
-            // 자동으로 키 입력 모달 재표시
-            setTimeout(() => showApiKeyModal("🔑 API 키 재등록", "입력하신 키가 유효하지 않습니다.<br>구글 AI Studio에서 새 키를 발급받아 입력해 주세요."), 500);
-        } else if (errMsg.includes("429")) {
-            showToast("[한도 초과] 구글 AI가 잠시 바쁩니다. 약 30초 뒤에 다시 시도해 주세요.");
-        } else {
-            showToast(`에러: ${errMsg.substring(0, 80)}... (잠시 후 다시 시도해 주세요)`);
-        }
-        
+        console.error('AI Buddy Detailed Error:', e);
+        handleGeminiError(e, '에러');
     } finally {
         btnAiGenerate.disabled = false;
         btnAiGenerate.innerHTML = '<i data-lucide="wand-2"></i> 영작하기';
@@ -1077,7 +1562,8 @@ function internalImportFromCSV(e) {
             }
         });
         saveToLocalStorage();
-        renderCards();
+        renderMyList();
+        if (typeof internalUpdateCategory === 'function') internalUpdateCategory(state.currentCategory);
         showToast(`${importCount}개의 문장을 가져왔습니다.`);
         
         // AUTO-SWITCH TO STUDY
@@ -1161,7 +1647,8 @@ window.deleteCard = function(id) {
         state.allCards = state.allCards.filter(c => c.id !== id);
         saveToLocalStorage();
         renderMyList();
-        renderCards();
+        renderMyList();
+        if (typeof internalUpdateCategory === 'function') internalUpdateCategory(state.currentCategory);
         showToast("삭제되었습니다.");
     }
 };

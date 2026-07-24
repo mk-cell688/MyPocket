@@ -110,66 +110,210 @@
                         <h2><i data-lucide="sparkles"></i> AI Buddy</h2>
                         <span class="ai-badge">Powered by Gemini</span>
                     </div>
-                    <p>어떤 표현을 영어로 만들고 싶나요?</p>
-                    
-                </div>
-                
-                <div class="ai-input-group">
-                    <div class="input-field">
-                        <label for="ai-input-ko"><i data-lucide="languages"></i> 한국어 문장</label>
-                        <textarea id="ai-input-ko" lang="ko" placeholder="영어로 바꾸고 싶은 한국어 문장을 입력하세요. (ex. 이거 다른 색깔은 없나요?)"></textarea>
-                    </div>
-                    
-                    <div class="input-field">
-                        <label for="ai-input-en"><i data-lucide="edit-3"></i> 내가 아는 영작 (선택)</label>
-                        <textarea id="ai-input-en" lang="en" placeholder="직접 만든 영어나 알고 있는 표현을 적어보세요. (보다 정확한 교정이 가능합니다.)"></textarea>
-                    </div>
-                    
-                    <div class="ai-options">
-                        <label>상황(카테고리) 선택</label>
-                        <div class="ai-category-select">
-                            <button class="ai-cat-btn selected" data-cat="biz">비즈니스</button>
-                            <button class="ai-cat-btn" data-cat="daily">일상</button>
-                            <button class="ai-cat-btn" data-cat="travel">여행</button>
-                        </div>
-                    </div>
-
-                    <div class="ai-options">
-                        <label>표현 톤 선택</label>
-                        <div class="ai-tone-select">
-                            <button class="ai-tone-btn selected" data-tone="official">
-                                <i data-lucide="briefcase"></i> 공식적/업무
-                            </button>
-                            <button class="ai-tone-btn" data-tone="general">
-                                <i data-lucide="sun"></i> 일반
-                            </button>
-                            <button class="ai-tone-btn" data-tone="casual">
-                                <i data-lucide="smile"></i> 캐주얼
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <button id="btn-ai-generate" class="btn btn-primary btn-block">
-                        <i data-lucide="wand-2"></i>
-                        <span>영작하기</span>
-                    </button>
+                    <p id="ai-header-desc">영작 · 대화 코치 · 교정으로 바로 써먹을 표현을 만들어요.</p>
                 </div>
 
-                <div id="ai-result" class="ai-result-card hidden">
-                    <div class="result-label">Result</div>
-                    <div class="result-en-row">
-                        <div id="ai-result-en" class="result-en" lang="en">...</div>
-                        <button type="button" id="btn-speak-ai" class="btn-speak btn-speak-inline" title="영어 읽어주기" aria-label="영어 읽어주기">
-                            <i data-lucide="volume-2"></i>
+                <nav class="sub-tabs" id="ai-sub-tabs">
+                    <button type="button" class="sub-tab active" data-ai-tab="write">영작</button>
+                    <button type="button" class="sub-tab" data-ai-tab="coach">대화 코치</button>
+                    <button type="button" class="sub-tab" data-ai-tab="correct">교정</button>
+                </nav>
+
+                <!-- Write -->
+                <div id="ai-tab-write" class="ai-tab-pane">
+                    <div class="ai-input-group">
+                        <div class="input-field">
+                            <label for="ai-input-ko"><i data-lucide="languages"></i> 한국어 문장</label>
+                            <textarea id="ai-input-ko" lang="ko" placeholder="영어로 바꾸고 싶은 한국어 문장을 입력하세요. (ex. 이거 다른 색깔은 없나요?)"></textarea>
+                        </div>
+                        
+                        <div class="input-field">
+                            <label for="ai-input-en"><i data-lucide="edit-3"></i> 내가 아는 영작 (선택)</label>
+                            <textarea id="ai-input-en" lang="en" placeholder="직접 만든 영어나 알고 있는 표현을 적어보세요. (보다 정확한 교정이 가능합니다.)"></textarea>
+                        </div>
+                        
+                        <div class="ai-options">
+                            <label>상황(카테고리) 선택</label>
+                            <div class="ai-category-select">
+                                <button type="button" class="ai-cat-btn selected" data-cat="biz">비즈니스</button>
+                                <button type="button" class="ai-cat-btn" data-cat="daily">일상</button>
+                                <button type="button" class="ai-cat-btn" data-cat="travel">여행</button>
+                            </div>
+                        </div>
+
+                        <div class="ai-options">
+                            <label>표현 톤 선택</label>
+                            <div class="ai-tone-select">
+                                <button type="button" class="ai-tone-btn selected" data-tone="official">
+                                    <i data-lucide="briefcase"></i> 공식적/업무
+                                </button>
+                                <button type="button" class="ai-tone-btn" data-tone="general">
+                                    <i data-lucide="sun"></i> 일반
+                                </button>
+                                <button type="button" class="ai-tone-btn" data-tone="casual">
+                                    <i data-lucide="smile"></i> 캐주얼
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <button id="btn-ai-generate" class="btn btn-primary btn-block">
+                            <i data-lucide="wand-2"></i>
+                            <span>영작하기</span>
                         </button>
                     </div>
-                    <div id="ai-result-ko" class="result-ko" lang="ko">...</div>
-                    <p id="ai-result-usage" class="result-usage" lang="ko">...</p>
-                    <div id="ai-result-ex" class="result-ex" lang="en"></div>
-                    <button id="btn-add-to-pocket" class="btn btn-white btn-block">
-                        <i data-lucide="plus-circle"></i>
-                        <span>학습 포켓에 넣기</span>
-                    </button>
+
+                    <div id="ai-result" class="ai-result-card hidden">
+                        <div class="result-label">Result</div>
+                        <div class="result-en-row">
+                            <div id="ai-result-en" class="result-en" lang="en">...</div>
+                            <button type="button" id="btn-speak-ai" class="btn-speak btn-speak-inline" title="영어 읽어주기" aria-label="영어 읽어주기">
+                                <i data-lucide="volume-2"></i>
+                            </button>
+                        </div>
+                        <div id="ai-result-ko" class="result-ko" lang="ko">...</div>
+                        <p id="ai-result-usage" class="result-usage" lang="ko">...</p>
+                        <div id="ai-result-ex" class="result-ex" lang="en"></div>
+                        <button id="btn-add-to-pocket" class="btn btn-white btn-block">
+                            <i data-lucide="plus-circle"></i>
+                            <span>학습 포켓에 넣기</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Dialogue Coach -->
+                <div id="ai-tab-coach" class="ai-tab-pane hidden">
+                    <div class="ai-input-group">
+                        <div class="input-field">
+                            <label for="coach-situation"><i data-lucide="map-pin"></i> 상황</label>
+                            <input type="text" id="coach-situation" placeholder="예: 호텔 체크인, 카페에서 주문, 미팅 일정 조율">
+                        </div>
+                        <div class="ai-options">
+                            <label>카테고리</label>
+                            <div class="ai-category-select" id="coach-cat-select">
+                                <button type="button" class="coach-cat-btn selected" data-cat="travel">여행</button>
+                                <button type="button" class="coach-cat-btn" data-cat="daily">일상</button>
+                                <button type="button" class="coach-cat-btn" data-cat="biz">비즈니스</button>
+                            </div>
+                        </div>
+                        <button type="button" id="btn-coach-start" class="btn btn-primary btn-block">
+                            <i data-lucide="messages-square"></i>
+                            <span>대화 시작</span>
+                        </button>
+                    </div>
+                    <div id="coach-chat" class="coach-chat hidden"></div>
+                    <div id="coach-reply-box" class="coach-reply-box hidden">
+                        <textarea id="coach-user-input" lang="en" rows="2" placeholder="영어로 대답해 보세요..."></textarea>
+                        <div class="coach-reply-actions">
+                            <button type="button" id="btn-coach-send" class="btn btn-primary">보내기</button>
+                            <button type="button" id="btn-coach-hint" class="btn btn-secondary">힌트</button>
+                            <button type="button" id="btn-coach-reset" class="btn btn-secondary">리셋</button>
+                        </div>
+                    </div>
+                    <div id="coach-suggest" class="ai-result-card hidden">
+                        <div class="result-label">포켓에 넣을 표현</div>
+                        <div id="coach-suggest-en" class="result-en"></div>
+                        <div id="coach-suggest-ko" class="result-ko"></div>
+                        <p id="coach-suggest-tip" class="result-usage"></p>
+                        <button type="button" id="btn-coach-save" class="btn btn-white btn-block">
+                            <i data-lucide="plus-circle"></i> 포켓에 저장
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Correction -->
+                <div id="ai-tab-correct" class="ai-tab-pane hidden">
+                    <div class="ai-input-group">
+                        <div class="input-field">
+                            <label for="correct-en"><i data-lucide="pencil"></i> 내가 쓴 영어</label>
+                            <textarea id="correct-en" lang="en" placeholder="교정받고 싶은 영어 문장을 적어 주세요."></textarea>
+                        </div>
+                        <div class="input-field">
+                            <label for="correct-ko"><i data-lucide="languages"></i> 전달하고 싶은 뜻 (선택)</label>
+                            <textarea id="correct-ko" lang="ko" rows="2" placeholder="한국어 의도를 적으면 더 정확한 교정에 도움이 됩니다."></textarea>
+                        </div>
+                        <div class="ai-options">
+                            <label>톤</label>
+                            <div class="ai-tone-select" id="correct-tone-select">
+                                <button type="button" class="correct-tone-btn selected" data-tone="general">일반</button>
+                                <button type="button" class="correct-tone-btn" data-tone="official">공식</button>
+                                <button type="button" class="correct-tone-btn" data-tone="casual">캐주얼</button>
+                            </div>
+                        </div>
+                        <button type="button" id="btn-correct" class="btn btn-primary btn-block">
+                            <i data-lucide="spell-check"></i>
+                            <span>교정받기</span>
+                        </button>
+                    </div>
+                    <div id="correct-result" class="ai-result-card hidden">
+                        <div class="result-label">교정 결과</div>
+                        <div class="result-en-row">
+                            <div id="correct-result-en" class="result-en"></div>
+                            <button type="button" id="btn-speak-correct" class="btn-speak btn-speak-inline" title="영어 읽어주기">
+                                <i data-lucide="volume-2"></i>
+                            </button>
+                        </div>
+                        <div id="correct-result-ko" class="result-ko"></div>
+                        <p id="correct-result-feedback" class="result-usage"></p>
+                        <div id="correct-result-ex" class="result-ex"></div>
+                        <button type="button" id="btn-correct-save" class="btn btn-white btn-block">
+                            <i data-lucide="plus-circle"></i> 학습 포켓에 넣기
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Practice: Review + Dictation -->
+            <section id="practice-panel" class="panel">
+                <div class="ai-header">
+                    <div class="ai-title-wrap">
+                        <h2><i data-lucide="dumbbell"></i> 연습</h2>
+                    </div>
+                    <p>복습 큐레이터와 받아쓰기로 기억을 단단히 해요.</p>
+                </div>
+
+                <nav class="sub-tabs" id="practice-sub-tabs">
+                    <button type="button" class="sub-tab active" data-practice-tab="review">복습</button>
+                    <button type="button" class="sub-tab" data-practice-tab="dictation">받아쓰기</button>
+                </nav>
+
+                <div id="practice-tab-review" class="ai-tab-pane">
+                    <div class="practice-card">
+                        <h3>복습 큐레이터</h3>
+                        <p class="practice-desc">오래 안 본 카드·약한 카드를 골라 오늘 세션을 만들어 줍니다.</p>
+                        <div id="review-summary" class="review-summary">복습 대기 카드를 계산 중…</div>
+                        <label class="practice-label">세션 장수
+                            <select id="review-count" class="custom-select">
+                                <option value="5">5장</option>
+                                <option value="8" selected>8장</option>
+                                <option value="12">12장</option>
+                            </select>
+                        </label>
+                        <button type="button" id="btn-review-start" class="btn btn-primary btn-block">
+                            <i data-lucide="refresh-cw"></i> 복습 시작
+                        </button>
+                    </div>
+                </div>
+
+                <div id="practice-tab-dictation" class="ai-tab-pane hidden">
+                    <div class="practice-card">
+                        <h3>받아쓰기</h3>
+                        <p class="practice-desc">음성을 듣고 영어를 직접 타이핑해 보세요.</p>
+                        <button type="button" id="btn-dictation-start" class="btn btn-primary btn-block">
+                            <i data-lucide="ear"></i> 새 문제 듣기
+                        </button>
+                        <div id="dictation-area" class="dictation-area hidden">
+                            <div class="dictation-controls">
+                                <button type="button" id="btn-dictation-replay" class="btn btn-secondary">
+                                    <i data-lucide="volume-2"></i> 다시 듣기
+                                </button>
+                                <button type="button" id="btn-dictation-slow" class="btn btn-secondary">느리게</button>
+                            </div>
+                            <textarea id="dictation-input" lang="en" rows="3" placeholder="들은 내용을 영어로 적어 보세요"></textarea>
+                            <button type="button" id="btn-dictation-check" class="btn btn-primary btn-block">채점하기</button>
+                            <div id="dictation-feedback" class="dictation-feedback hidden"></div>
+                            <button type="button" id="btn-dictation-next" class="btn btn-secondary btn-block hidden">다음 문제</button>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -223,6 +367,7 @@
                             <span>전체 데이터 초기화</span>
                         </button>
                     </div>
+                </div>
             </section>
         </main>
 
@@ -234,11 +379,15 @@
             </button>
             <button class="nav-item" data-panel="ai-panel">
                 <i data-lucide="message-square"></i>
-                <span>AI 버디</span>
+                <span>AI</span>
+            </button>
+            <button class="nav-item" data-panel="practice-panel">
+                <i data-lucide="dumbbell"></i>
+                <span>연습</span>
             </button>
             <button class="nav-item" data-panel="list-panel">
                 <i data-lucide="list"></i>
-                <span>내 목록</span>
+                <span>목록</span>
             </button>
         </footer>
     </div>

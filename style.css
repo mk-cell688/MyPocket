@@ -878,6 +878,26 @@ textarea:focus {
     color: var(--primary-color);
 }
 
+.coach-cat-btn,
+.correct-tone-btn {
+    border: 1px solid #e5e7eb;
+    background: #fff;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--text-secondary);
+}
+
+.coach-cat-btn.selected,
+.correct-tone-btn.selected {
+    border-color: var(--primary-color);
+    background-color: #f5f3ff;
+    color: var(--primary-color);
+}
+
 .ai-result-card {
     background: linear-gradient(145deg, #313E5D, #475569);
     color: white;
@@ -1180,4 +1200,204 @@ textarea:focus {
     height: 48px;
     margin-bottom: 12px;
     opacity: 0.3;
+}
+/* Sub-tabs & practice / coach / correct */
+.sub-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-bottom: 16px;
+    padding: 4px;
+    background: #eef2f7;
+    border-radius: 12px;
+}
+
+#practice-sub-tabs {
+    grid-template-columns: 1fr 1fr;
+}
+
+.sub-tab {
+    border: none;
+    background: transparent;
+    padding: 10px 8px;
+    border-radius: 9px;
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.sub-tab.active {
+    background: #fff;
+    color: var(--primary-color);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.ai-tab-pane.hidden,
+.hidden {
+    display: none !important;
+}
+
+.input-field input[type="text"] {
+    width: 100%;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-family: inherit;
+    font-size: 0.95rem;
+    box-sizing: border-box;
+}
+
+.coach-chat {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 320px;
+    overflow-y: auto;
+    margin: 12px 0;
+    padding: 12px;
+    background: #f8fafc;
+    border-radius: 14px;
+    border: 1px solid #e5e7eb;
+}
+
+.coach-bubble {
+    max-width: 92%;
+    padding: 10px 12px;
+    border-radius: 12px;
+    font-size: 0.9rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+
+.coach-bubble.npc {
+    align-self: flex-start;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+}
+
+.coach-bubble.user {
+    align-self: flex-end;
+    background: var(--primary-color);
+    color: #fff;
+}
+
+.coach-bubble.coach {
+    align-self: stretch;
+    background: #eef6ff;
+    border: 1px solid #cfe3ff;
+    color: #1e3a5f;
+    font-size: 0.84rem;
+}
+
+.coach-reply-box textarea {
+    width: 100%;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 12px;
+    font-family: inherit;
+    font-size: 0.95rem;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 72px;
+}
+
+.coach-reply-actions {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1fr;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.practice-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: var(--shadow-sm, 0 2px 8px rgba(0,0,0,0.04));
+}
+
+.practice-card h3 {
+    margin: 0 0 8px;
+    font-size: 1.1rem;
+    color: var(--text-primary);
+}
+
+.practice-desc {
+    margin: 0 0 16px;
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+.review-summary {
+    background: #f1f5f9;
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 14px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--text-primary);
+}
+
+.practice-label {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 14px;
+}
+
+.dictation-area {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.dictation-controls {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 8px;
+}
+
+.dictation-area textarea {
+    width: 100%;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 12px;
+    font-family: inherit;
+    font-size: 1rem;
+    box-sizing: border-box;
+}
+
+.dictation-feedback {
+    border-radius: 12px;
+    padding: 14px;
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+.dictation-feedback.ok {
+    background: #ecfdf5;
+    color: #065f46;
+    border: 1px solid #a7f3d0;
+}
+
+.dictation-feedback.bad {
+    background: #fff7ed;
+    color: #9a3412;
+    border: 1px solid #fed7aa;
+}
+
+.bottom-nav .nav-item span {
+    font-size: 0.68rem;
+}
+
+.bottom-nav .nav-item i {
+    width: 20px;
+    height: 20px;
 }
