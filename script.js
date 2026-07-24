@@ -93,6 +93,10 @@ const progressFill = document.getElementById('progress-fill');
 const cardCountLabel = document.getElementById('card-count');
 const btnAgain = document.getElementById('btn-again');
 const btnDone = document.getElementById('btn-done');
+const btnSpeak = document.getElementById('btn-speak');
+const btnSpeakEn = document.getElementById('btn-speak-en');
+const btnSpeakEx = document.getElementById('btn-speak-ex');
+const btnSpeakAi = document.getElementById('btn-speak-ai');
 const toastContainer = document.getElementById('toast-container');
 const categoryTabs = document.getElementById('category-tabs');
 const bottomNavItems = document.querySelectorAll('.nav-item');
@@ -537,6 +541,37 @@ function setupEventListeners() {
     btnDone.addEventListener('click', () => handleCardAction('done'));
     btnAgain.addEventListener('click', () => handleCardAction('again'));
 
+    btnSpeak?.addEventListener('click', () => speakCurrentCardEnglish());
+    btnSpeakEn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        speakCurrentCardEnglish();
+    });
+    btnSpeakEx?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const text = (cardEx?.innerText || '').trim();
+        if (!text) {
+            showToast('읽을 예문이 없습니다.');
+            return;
+        }
+        speakEnglish(text);
+    });
+    btnSpeakAi?.addEventListener('click', () => {
+        const text = (aiResultEn?.textContent || '').trim();
+        if (!text || text === '...') {
+            showToast('먼저 영작을 생성해 주세요.');
+            return;
+        }
+        speakEnglish(text);
+    });
+
+    // 일부 브라우저는 음성 목록을 늦게 로드함
+    if (window.speechSynthesis) {
+        window.speechSynthesis.getVoices();
+        window.speechSynthesis.onvoiceschanged = () => {
+            window.speechSynthesis.getVoices();
+        };
+    }
+
     aiCatBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             aiCatBtns.forEach(b => b.classList.remove('selected'));
@@ -617,11 +652,19 @@ function renderCurrentCard() {
         progressFill.style.width = "0%";
         btnDone.disabled = true;
         btnAgain.disabled = true;
+        if (btnSpeak) btnSpeak.disabled = true;
+        if (btnSpeakEn) btnSpeakEn.disabled = true;
+        if (btnSpeakEx) btnSpeakEx.disabled = true;
+        stopSpeaking();
         return;
     }
 
     btnDone.disabled = false;
     btnAgain.disabled = false;
+    if (btnSpeak) btnSpeak.disabled = false;
+    if (btnSpeakEn) btnSpeakEn.disabled = false;
+    if (btnSpeakEx) btnSpeakEx.disabled = false;
+    stopSpeaking();
     const card = state.currentQueue[0];
     cardEn.textContent = card.en;
     cardKo.textContent = card.ko;
@@ -640,6 +683,76 @@ function renderCurrentCard() {
     // Update progress bar to match the current card index out of the session total
     let progressPercent = (state.currentIndex / state.sessionTotal) * 100;
     progressFill.style.width = `${Math.min(progressPercent, 100)}%`;
+}
+
+function getEnglishVoice() {
+    if (!window.speechSynthesis) return null;
+    const voices = window.speechSynthesis.getVoices();
+    return (
+        voices.find(v => /en-US/i.test(v.lang) && /google|natural|premium|enhanced/i.test(v.name)) ||
+        voices.find(v => /en-US/i.test(v.lang)) ||
+        voices.find(v => /^en(-|$)/i.test(v.lang)) ||
+        null
+    );
+}
+
+function setSpeakingUi(active) {
+    [btnSpeak, btnSpeakEn, btnSpeakEx, btnSpeakAi].forEach(btn => {
+        if (btn) btn.classList.toggle('speaking', active);
+    });
+}
+
+function stopSpeaking() {
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    setSpeakingUi(false);
+}
+
+function speakEnglish(text) {
+    const clean = (text || '').replace(/\s+/g, ' ').trim();
+    if (!clean) {
+        showToast('읽을 영어 문장이 없습니다.');
+        return;
+    }
+    if (!window.speechSynthesis) {
+        showToast('이 브라우저는 음성 읽기를 지원하지 않습니다.');
+        return;
+    }
+
+    stopSpeaking();
+    const utter = new SpeechSynthesisUtterance(clean);
+    utter.lang = 'en-US';
+    utter.rate = 0.92;
+    utter.pitch = 1;
+    const voice = getEnglishVoice();
+    if (voice) utter.voice = voice;
+
+    utter.onstart = () => setSpeakingUi(true);
+    utter.onend = () => setSpeakingUi(false);
+    utter.onerror = () => {
+        setSpeakingUi(false);
+        showToast('음성 재생에 실패했습니다.');
+    };
+
+    // Chrome: voices가 비어 있으면 한 박자 뒤 재시도
+    if (!voice && window.speechSynthesis.getVoices().length === 0) {
+        window.speechSynthesis.getVoices();
+        setTimeout(() => {
+            const delayed = getEnglishVoice();
+            if (delayed) utter.voice = delayed;
+            window.speechSynthesis.speak(utter);
+        }, 120);
+        return;
+    }
+
+    window.speechSynthesis.speak(utter);
+}
+
+function speakCurrentCardEnglish() {
+    if (state.currentQueue.length === 0) {
+        showToast('읽을 카드가 없습니다.');
+        return;
+    }
+    speakEnglish(state.currentQueue[0].en);
 }
 
 function handleCardAction(action) {

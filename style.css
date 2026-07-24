@@ -453,6 +453,87 @@ main {
     z-index: 10;
 }
 
+.btn-speak {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 12;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(37, 99, 235, 0.1);
+    color: var(--primary-color);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, transform 0.15s;
+}
+
+.flashcard-front .my-badge:not(.hidden) ~ .btn-speak,
+.flashcard-front:has(.my-badge:not(.hidden)) .btn-speak {
+    right: 64px;
+}
+
+.flashcard-back .btn-speak {
+    right: 16px;
+}
+
+.flashcard-back .my-badge:not(.hidden) ~ .btn-speak,
+.flashcard-back:has(.my-badge:not(.hidden)) .btn-speak {
+    right: 64px;
+}
+
+.btn-speak i {
+    width: 18px;
+    height: 18px;
+}
+
+.btn-speak:hover {
+    background: rgba(37, 99, 235, 0.18);
+}
+
+.btn-speak:active,
+.btn-speak.speaking {
+    transform: scale(0.94);
+    background: var(--primary-color);
+    color: #fff;
+}
+
+.btn-speak-inline {
+    position: static;
+    flex-shrink: 0;
+}
+
+.result-en-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.result-en-row .result-en {
+    flex: 1;
+}
+
+.btn-speak-main {
+    flex: 0.85;
+    background: rgba(37, 99, 235, 0.1);
+    color: var(--primary-color);
+    border: 1px solid rgba(37, 99, 235, 0.25);
+}
+
+.btn-speak-main:active,
+.btn-speak-main.speaking {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+.btn-speak-main:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 #card-en {
     font-size: 1.8rem;
     font-weight: 700;

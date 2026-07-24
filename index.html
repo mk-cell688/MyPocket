@@ -66,12 +66,18 @@
                                 <div class="flashcard-front">
                                     <span class="card-label">English</span>
                                     <div id="card-my-front" class="my-badge hidden">My</div>
+                                    <button type="button" id="btn-speak-en" class="btn-speak" title="영어 읽어주기" aria-label="영어 읽어주기">
+                                        <i data-lucide="volume-2"></i>
+                                    </button>
                                     <h2 id="card-en">Welcome!</h2>
                                     <p class="tap-hint">Tap to flip</p>
                                 </div>
                                 <div class="flashcard-back">
                                     <span class="card-label">KOREAN</span>
                                     <div id="card-my-back" class="my-badge hidden">My</div>
+                                    <button type="button" id="btn-speak-ex" class="btn-speak" title="예문 읽어주기" aria-label="예문 읽어주기">
+                                        <i data-lucide="volume-2"></i>
+                                    </button>
                                     <h3 id="card-ko">환영합니다!</h3>
                                     <p id="card-usage" class="usage-tip">카드를 클릭해서 학습을 시작하세요.</p>
                                     <p id="card-ex" class="example-box"></p>
@@ -84,6 +90,10 @@
                         <button id="btn-again" class="btn btn-secondary">
                             <i data-lucide="chevron-right"></i>
                             <span>다음</span>
+                        </button>
+                        <button type="button" id="btn-speak" class="btn btn-speak-main">
+                            <i data-lucide="volume-2"></i>
+                            <span>듣기</span>
                         </button>
                         <button id="btn-done" class="btn btn-primary">
                             <i data-lucide="check-circle-2"></i>
@@ -147,7 +157,12 @@
 
                 <div id="ai-result" class="ai-result-card hidden">
                     <div class="result-label">Result</div>
-                    <div id="ai-result-en" class="result-en" lang="en">...</div>
+                    <div class="result-en-row">
+                        <div id="ai-result-en" class="result-en" lang="en">...</div>
+                        <button type="button" id="btn-speak-ai" class="btn-speak btn-speak-inline" title="영어 읽어주기" aria-label="영어 읽어주기">
+                            <i data-lucide="volume-2"></i>
+                        </button>
+                    </div>
                     <div id="ai-result-ko" class="result-ko" lang="ko">...</div>
                     <p id="ai-result-usage" class="result-usage" lang="ko">...</p>
                     <div id="ai-result-ex" class="result-ex" lang="en"></div>
